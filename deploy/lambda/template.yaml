@@ -18,14 +18,8 @@ Resources:
       PackageType: Image
       Architectures:
         - x86_64
-      # Direct-invoke is the primary path (the npm SDK's mode:'lambda').
-      # The optional HTTP API below exposes the same handler over POST /scan.
-      Events:
-        ScanApi:
-          Type: HttpApi
-          Properties:
-            Path: /scan
-            Method: POST
+      # IAM-authenticated direct invoke is the supported default. Add an API
+      # Gateway event explicitly only when an authentication layer is present.
 
 Outputs:
   FunctionName:
@@ -33,6 +27,3 @@ Outputs:
     Value: !Ref DocumentOcrFunction
   FunctionArn:
     Value: !GetAtt DocumentOcrFunction.Arn
-  HttpApiUrl:
-    Description: Base URL of the HTTP API
-    Value: !Sub 'https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com'

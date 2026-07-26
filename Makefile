@@ -2,7 +2,7 @@
 
 install:
 	uv sync
-	cd packages/passport-ocr && npm install
+	cd packages/passport-ocr && npm ci
 
 dev:
 	PYTHONPATH=$(PWD) uv run uvicorn deploy.docker.server:app --host 0.0.0.0 --port 8000 --reload --reload-dir core --reload-dir deploy/docker
@@ -13,7 +13,7 @@ test-py:
 	uv run pytest tests/python -v
 
 test-ts:
-	cd packages/passport-ocr && npx vitest run ../../tests/typescript
+	cd packages/passport-ocr && npm test
 
 build:
 	cd packages/passport-ocr && npm run build

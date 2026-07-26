@@ -1,12 +1,14 @@
 """
-Accuracy benchmark for passport OCR pipeline.
+Accuracy benchmark for the document OCR pipeline.
 
-Runs the pipeline against all images in sample-passports/ and reports metrics.
+Runs against an ignored, private dataset under benchmark-data/ and reports
+metrics. The directory must contain a manifest.json keyed by image filename.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import statistics
 import sys
 import time
@@ -25,13 +27,21 @@ WARM_BIODATA_MEDIAN_MS_TARGET = 5000
 
 
 def run_benchmark():
-    sample_dir = Path(__file__).parent.parent / "sample-passports"
+    sample_dir = Path(
+        os.getenv(
+            "DOCUMENT_OCR_BENCHMARK_DATA",
+            Path(__file__).parent.parent / "benchmark-data",
+        )
+    )
     manifest_path = sample_dir / "manifest.json"
     expectations = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
     images = [sample_dir / name for name in expectations]
 
     if not images:
-        print("No sample images found in sample-passports/")
+        print(
+            f"No benchmark images found in {sample_dir}. "
+            "Set DOCUMENT_OCR_BENCHMARK_DATA or create benchmark-data/."
+        )
         sys.exit(1)
 
     warmup_image = next(

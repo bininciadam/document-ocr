@@ -47,7 +47,7 @@ steps:
       - --min-instances=0
       - --max-instances=10
       - --port=8000
-      - --allow-unauthenticated
+      - --no-allow-unauthenticated
 
 options:
   machineType: E2_HIGHCPU_8

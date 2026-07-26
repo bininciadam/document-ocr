@@ -47,6 +47,11 @@ Thumbs.db
 .coverage
 htmlcov/
 
+# Private/local document fixtures
+# Never commit identity documents, even when they are public samples.
+sample-passports/
+benchmark-data/
+
 # env
 .env
 .env.local

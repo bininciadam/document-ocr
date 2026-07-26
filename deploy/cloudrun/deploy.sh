@@ -65,18 +65,28 @@ gcloud run services replace "$RENDERED" \
   --region "$GCP_REGION" \
   --project "$GCP_PROJECT"
 
-# Public, unauthenticated access. Remove this block for an internal service.
-gcloud run services add-iam-policy-binding "$SERVICE_NAME" \
-  --region "$GCP_REGION" \
-  --project "$GCP_PROJECT" \
-  --member="allUsers" \
-  --role="roles/run.invoker" \
-  --quiet
+if [[ "${ALLOW_UNAUTHENTICATED:-false}" == "true" ]]; then
+  echo "==> Enabling unauthenticated invocation (explicit opt-in)"
+  gcloud run services add-iam-policy-binding "$SERVICE_NAME" \
+    --region "$GCP_REGION" \
+    --project "$GCP_PROJECT" \
+    --member="allUsers" \
+    --role="roles/run.invoker" \
+    --quiet
+else
+  echo "==> Enforcing authenticated invocation"
+  gcloud run services remove-iam-policy-binding "$SERVICE_NAME" \
+    --region "$GCP_REGION" \
+    --project "$GCP_PROJECT" \
+    --member="allUsers" \
+    --role="roles/run.invoker" \
+    --quiet 2>/dev/null || true
+fi
 
 URL="$(gcloud run services describe "$SERVICE_NAME" \
   --region "$GCP_REGION" --project "$GCP_PROJECT" \
   --format='value(status.url)')"
 
 echo "==> Deployed: ${URL}"
-echo "    Health:  ${URL}/health"
-echo "    Scan:    curl -F image=@passport.jpg ${URL}/scan"
+echo "    Access is authenticated by default. Use a Google identity token or"
+echo "    explicitly set ALLOW_UNAUTHENTICATED=true behind your own auth layer."

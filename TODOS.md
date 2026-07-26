@@ -6,10 +6,9 @@ TypeScript SDK tests, back-page accuracy, Cloud Run deploy) were completed in
 
 ## Open
 
-1. **Replace the watermarked sample images.** `sample-passports/` still uses
-   watermarked specimens (`SAMPLE - IMMIHELP.COM`), which corrupt some OCR output
-   and make the passport benchmark less reliable. Source properly anonymized or
-   licence-clean passport scans for `benchmarks/accuracy.py`.
+1. **Build a licence-clean evaluation dataset.** Source consented, properly
+   anonymized documents or unmistakably synthetic specimens for the private
+   `benchmark-data/` suite. Do not commit identity documents to this repository.
 
 2. **End-to-end image benchmark for the new document types.** The PAN / Aadhaar /
    driving-licence / voter-ID extractors are covered only by deterministic
@@ -40,10 +39,6 @@ TypeScript SDK tests, back-page accuracy, Cloud Run deploy) were completed in
    `_find_name` infers it spatially relative to the DOB line. Validate against
    more real layouts (vertical/horizontal cards, masked Aadhaar, mAadhaar PDF).
 
-7. **SDK retry semantics for 4xx.** `packages/passport-ocr/src/retry.ts` only
-   skips retries when the error message contains `400`/`422`; a 400 whose body
-   carries a non-numeric `error` (e.g. `INVALID_CONTENT_TYPE`) is still retried.
-   Consider threading the HTTP status through instead of string-matching.
-
-8. **Server lifespan handler.** `deploy/docker/server.py` still uses the
-   deprecated `@app.on_event("startup")`; migrate to a FastAPI lifespan handler.
+7. **SDK retry semantics for 4xx.** Thread structured HTTP status information
+   through retry handling rather than inferring retryability from error-message
+   text.

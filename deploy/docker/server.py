@@ -1,16 +1,19 @@
 """
 FastAPI server wrapping the passport OCR pipeline.
 
-Used by the passport-ocr npm package to run OCR locally.
+Used by the document-ocr npm package to run OCR locally.
 """
 
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 import logging
+import os
+import secrets
 import uuid
 
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, Header, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
 
 from core.ocr_engine import OCRModelInitError
@@ -22,24 +25,22 @@ from core.preprocessor import ImageQualityError
 # ---------------------------------------------------------------------------
 
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
-logger = logging.getLogger("passport-ocr")
+logger = logging.getLogger("document-ocr")
+API_TOKEN = os.getenv("DOCUMENT_OCR_API_TOKEN") or None
 
 _ocr_semaphore = asyncio.Semaphore(1)
 _models_ready = False
 _model_init_error: str | None = None
 
 # ---------------------------------------------------------------------------
-# App
+# App lifecycle
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="Document OCR", version="1.2.0")
-
-
-@app.on_event("startup")
-async def _load_models():
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
     global _models_ready, _model_init_error
     logger.info("Loading OCR models...")
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         await loop.run_in_executor(None, _warm_up_ocr)
     except OCRModelInitError as exc:
@@ -47,9 +48,13 @@ async def _load_models():
         # process crash-looping. Liveness (/health) remains green.
         _model_init_error = str(exc)
         logger.error("OCR model initialisation failed: %s", exc)
-        return
-    _models_ready = True
-    logger.info("OCR models loaded.")
+    else:
+        _models_ready = True
+        logger.info("OCR models loaded.")
+    yield
+
+
+app = FastAPI(title="Document OCR", version="2.2.0", lifespan=_lifespan)
 
 
 def _warm_up_ocr():
@@ -75,8 +80,20 @@ async def ready():
 
 
 @app.post("/scan")
-async def scan_passport(image: UploadFile = File(...)):
+async def scan_passport(
+    image: UploadFile = File(...),
+    authorization: str | None = Header(default=None),
+):
     request_id = str(uuid.uuid4())[:8]
+
+    if API_TOKEN is not None:
+        expected = f"Bearer {API_TOKEN}"
+        if authorization is None or not secrets.compare_digest(authorization, expected):
+            raise HTTPException(
+                status_code=401,
+                detail="UNAUTHORIZED",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
     # Validate content type
     content_type = image.content_type or ""

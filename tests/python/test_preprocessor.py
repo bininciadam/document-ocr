@@ -1,8 +1,11 @@
 """Tests for image preprocessing."""
 
+import io
+
 import cv2
 import numpy as np
 import pytest
+from PIL import Image
 
 from core.preprocessor import (
     ImageQualityError,
@@ -11,10 +14,40 @@ from core.preprocessor import (
     _check_glare,
     _detect_document,
     _is_plausible_document_quad,
+    _load_image,
     _normalise,
     _order_points,
     preprocess,
 )
+
+
+class TestPdfLoading:
+    @staticmethod
+    def _pdf_bytes() -> bytes:
+        output = io.BytesIO()
+        Image.new("RGB", (800, 600), "white").save(
+            output,
+            format="PDF",
+            resolution=150,
+        )
+        return output.getvalue()
+
+    def test_loads_pdf_path(self, tmp_path):
+        path = tmp_path / "document.pdf"
+        path.write_bytes(self._pdf_bytes())
+
+        image = _load_image(path)
+
+        assert image.ndim == 3
+        assert image.shape[2] == 3
+        assert min(image.shape[:2]) >= 600
+
+    def test_loads_pdf_bytes(self):
+        image = _load_image(self._pdf_bytes())
+
+        assert image.ndim == 3
+        assert image.shape[2] == 3
+        assert min(image.shape[:2]) >= 600
 
 
 class TestResolutionCheck:

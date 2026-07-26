@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 
 /**
- * postinstall script for passport-ocr
+ * postinstall script for document-ocr
  *
  * Sets up a Python virtual environment and installs dependencies
- * required for local passport OCR processing.
+ * required for local document OCR processing.
  *
  * Uses uv to install a compatible Python version (3.12) if the system
- * Python is too new or missing. PaddleOCR requires Python <= 3.13.
+ * Python is too new or missing.
  *
  * Exits 0 even on failure — errors will surface on first scan() call.
  */
@@ -23,11 +23,11 @@ const pythonDir = join(packageDir, 'python')
 const venvDir = join(packageDir, '.venv')
 const markerFile = join(venvDir, '.setup-complete')
 
-// PaddleOCR max supported Python version
+// Python version used by the bundled runtime
 const TARGET_PYTHON = '3.12'
 
 function log(msg) {
-  process.stderr.write(`[passport-ocr] ${msg}\n`)
+  process.stderr.write(`[document-ocr] ${msg}\n`)
 }
 
 function run(cmd, opts = {}) {
@@ -35,7 +35,7 @@ function run(cmd, opts = {}) {
   return execSync(cmd, {
     encoding: 'utf-8',
     stdio: ['pipe', 'pipe', 'pipe'],
-    timeout: 600000, // 10 minutes (PaddleOCR install is large)
+    timeout: 600000, // 10 minutes (OCR dependencies are large)
     ...opts,
   })
 }
@@ -52,7 +52,7 @@ function hasUv() {
 
 function findCompatiblePython() {
   /**
-   * Find a Python that PaddleOCR supports (3.12 or 3.13).
+   * Find a Python supported by the bundled runtime (3.12 or 3.13).
    * Check versioned commands first, then generic ones.
    */
   const candidates = process.platform === 'win32'
@@ -149,7 +149,7 @@ async function main() {
       }
     } catch (err) {
       log(`Warning: Failed to install dependencies: ${err.message?.split('\n')[0]}`)
-      log('Retry with: npm rebuild passport-ocr')
+      log('Retry with: npm rebuild document-ocr')
       return
     }
 
@@ -160,12 +160,12 @@ async function main() {
 
   // Strategy 3: Nothing worked
   log('Warning: Could not set up Python environment.')
-  log(`PaddleOCR requires Python 3.12-3.13. Your system Python may be too new (3.14+).`)
+  log('The bundled runtime requires Python 3.12-3.13.')
   if (!uvAvailable) {
     log('Install uv to auto-download a compatible Python:')
     log('  curl -LsSf https://astral.sh/uv/install.sh | sh')
   }
-  log('Then retry: npm rebuild passport-ocr')
+  log('Then retry: npm rebuild document-ocr')
 }
 
 main().catch((err) => {

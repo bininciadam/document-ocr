@@ -46,7 +46,7 @@
 ### Tests
 - 90 → 234 passing Python tests (each KYC extractor has deterministic
   TextRegion-fixture coverage across many layouts/edge cases); 12 → 24 TypeScript
-  tests. Passport benchmark still green on `sample-passports/`.
+  tests. Image-level accuracy remains dependent on a private evaluation dataset.
 
 ## 1.1.0 — 2026-04-25
 

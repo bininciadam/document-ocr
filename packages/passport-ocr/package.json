@@ -23,13 +23,30 @@
     "type": "git",
     "url": "https://github.com/piyush-gambhir/document-ocr"
   },
-  "keywords": ["passport", "ocr", "mrz", "rapidocr", "onnx", "document-scanning", "standalone"],
+  "homepage": "https://github.com/piyush-gambhir/document-ocr#readme",
+  "bugs": {
+    "url": "https://github.com/piyush-gambhir/document-ocr/issues"
+  },
+  "author": "Piyush Gambhir",
+  "keywords": [
+    "passport",
+    "ocr",
+    "mrz",
+    "rapidocr",
+    "onnx",
+    "aadhaar",
+    "pan",
+    "kyc",
+    "document-scanning",
+    "standalone"
+  ],
   "scripts": {
     "postinstall": "node scripts/postinstall.mjs",
     "sync-python": "bash scripts/sync-python.sh",
     "build": "bash scripts/sync-python.sh && tsup",
     "dev": "tsup --watch",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run ../../tests/typescript"
   },
   "optionalDependencies": {
     "@aws-sdk/client-lambda": "^3.500.0"
@@ -43,5 +60,8 @@
   "engines": {
     "node": ">=18"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
 }

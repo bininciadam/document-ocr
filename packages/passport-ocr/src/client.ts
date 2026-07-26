@@ -87,8 +87,8 @@ export class DocumentOCR {
 
     const data = await res.json()
 
-    if (res.status === 400) {
-      throw new Error(data.error || `Bad request: ${res.status}`)
+    if (res.status === 400 || res.status === 401) {
+      throw new Error(data.error || data.detail || `Request rejected: ${res.status}`)
     }
 
     if (res.status === 422 || res.ok) {

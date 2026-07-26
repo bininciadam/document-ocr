@@ -70,5 +70,5 @@ echo "    $LATEST_TAG"
 #   --region "$GCP_REGION" \
 #   --project "$GCP_PROJECT" \
 #   --platform managed \
-#   --allow-unauthenticated
+#   --no-allow-unauthenticated
 # --------------------------------------------------------------------------

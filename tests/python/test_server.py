@@ -1,6 +1,6 @@
 """Tests for the FastAPI server (deploy/docker/server.py).
 
-Uses httpx AsyncClient with ASGI transport — does NOT require PaddleOCR.
+Uses httpx AsyncClient with ASGI transport — does not load OCR models.
 """
 
 import io
@@ -96,6 +96,31 @@ class TestReady:
 
 
 class TestScan:
+    async def test_scan_requires_configured_bearer_token(self, client, small_image):
+        with patch.object(server_module, "API_TOKEN", "test-token"):
+            unauthorized = await client.post(
+                "/scan",
+                files={"image": ("passport.jpg", small_image, "image/jpeg")},
+            )
+            assert unauthorized.status_code == 401
+            assert unauthorized.json()["detail"] == "UNAUTHORIZED"
+
+            mock_result = MagicMock()
+            mock_result.status = "success"
+            mock_result.page_type = "passport_biodata"
+            mock_result.confidence = 0.9
+            mock_result.processing_ms = 10
+            mock_result.errors = []
+            mock_result.to_dict.return_value = {"status": "success"}
+
+            with patch("deploy.docker.server.scan", return_value=mock_result):
+                authorized = await client.post(
+                    "/scan",
+                    headers={"Authorization": "Bearer test-token"},
+                    files={"image": ("passport.jpg", small_image, "image/jpeg")},
+                )
+            assert authorized.status_code == 200
+
     async def test_scan_invalid_content_type(self, client):
         """Upload text/plain → 400 INVALID_CONTENT_TYPE."""
         resp = await client.post(

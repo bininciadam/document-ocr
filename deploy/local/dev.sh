@@ -6,7 +6,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 cd "$ROOT_DIR"
 
-echo "Starting passport-ocr dev server on http://localhost:8000"
+echo "Starting document-ocr dev server on http://localhost:8000"
 echo "Docs: http://localhost:8000/docs"
 echo ""
 

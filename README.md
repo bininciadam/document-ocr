@@ -1,8 +1,18 @@
 # document-ocr
 
-High-accuracy OCR pipeline for passports and Indian KYC documents. Preprocesses scans, classifies the document, runs targeted OCR with RapidOCR (PP-OCRv5), and extracts structured fields — passport MRZ with ICAO checksum validation, passport back-page fields (parents, address, old passport number), and the identifier + holder fields for PAN, Aadhaar, driving licence, and voter ID cards.
+Local-first OCR pipeline for passports and Indian KYC documents. It
+preprocesses scans, classifies the document, runs targeted OCR with RapidOCR
+(PP-OCRv5), and extracts structured fields—including passport MRZ data, Indian
+passport back-page fields, and identifier/holder fields for PAN, Aadhaar,
+driving licences, and voter IDs.
 
 Ships as a Python package with a FastAPI server, plus an npm wrapper at [`packages/passport-ocr`](packages/passport-ocr) that auto-spawns the Python server for Node.js consumers.
+
+> [!IMPORTANT]
+> This project is beta software for data extraction. It does not establish
+> document authenticity, verify identity against an issuing authority, detect
+> fraud, or by itself satisfy KYC obligations. Evaluate it on your own legally
+> obtained dataset before production use.
 
 ## Supported documents
 
@@ -28,10 +38,10 @@ make install
 make dev          # uvicorn on :8000 with reload
 ```
 
-Scan a passport image:
+Scan a document:
 
 ```bash
-curl -F image=@sample-passports/sample-indian-passport-1.jpg \
+curl -F image=@/path/to/document.jpg \
   http://localhost:8000/scan
 ```
 
@@ -56,7 +66,7 @@ import { DocumentOCR } from 'document-ocr';
 const ocr = new DocumentOCR();
 const result = await ocr.scan(imageBuffer);
 
-if (result.status === 'success') {
+if (result.status === 'success' && result.documentType === 'passport') {
   console.log(result.fields.passportNumber, result.mrzValid);
 }
 await ocr.stop();
@@ -72,7 +82,10 @@ The package auto-creates a `.venv`, installs the Python deps, and manages the lo
 | GET | `/ready` | `503` until OCR models finish loading |
 | POST | `/scan` | Multipart image upload, returns scan result JSON |
 
-`/scan` accepts images and PDFs up to 10 MB. Concurrency is serialized internally.
+`/scan` accepts images and PDFs up to 10 MB. Concurrency is serialized
+internally. Set `DOCUMENT_OCR_API_TOKEN` to require
+`Authorization: Bearer <token>` on `/scan`. For internet-facing deployments,
+use platform IAM or an API gateway in addition to application-level controls.
 
 ## Output
 
@@ -128,6 +141,10 @@ The same pipeline runs as a container, on Cloud Run, or on AWS Lambda. Copy
 `.env.deploy.example` to `.env.deploy.<env>` and fill in the relevant values
 first (Docker Hub and/or GCP).
 
+Cloud Run and Lambda deployments are authenticated by default. Do not expose
+an identity-document endpoint publicly without authentication, authorization,
+rate limiting, encrypted transport, and an explicit data-retention policy.
+
 ### Cloud Run (recommended)
 
 ```bash
@@ -152,17 +169,40 @@ sam build && sam deploy --guided   # uses Dockerfile.lambda + template.yaml
 
 The handler ([`deploy/lambda/handler.py`](deploy/lambda/handler.py)) returns the
 raw scan result on success and an `{statusCode, body}` envelope for errors.
+The included SAM template supports IAM-authenticated direct invocation and does
+not create a public API Gateway endpoint.
 
 ## Tests & benchmarks
 
 ```bash
-make test         # python + ts unit suites (fixture-driven, fast)
-make benchmark    # passport accuracy on sample-passports/
+make test
+make build
 ```
 
 The per-document extractors are covered by deterministic `TextRegion` fixtures
-under `tests/python/test_*_extractor.py`.
+under `tests/python/test_*_extractor.py`. These tests verify parsing and
+validation behavior; they are not a claim of real-world OCR accuracy.
+
+For image-level evaluation, place a private dataset and `manifest.json` under
+`benchmark-data/` and run:
+
+```bash
+make benchmark
+```
+
+The directory is ignored by Git. Never commit identity documents or personal
+data. See [CONTRIBUTING.md](CONTRIBUTING.md) for fixture rules.
+
+## Privacy and security
+
+Local Python and npm-local modes process documents on the same machine and do
+not include telemetry or document storage. HTTP and Lambda modes transmit
+documents to infrastructure controlled by the operator.
+
+Read [PRIVACY.md](PRIVACY.md) before deploying and report vulnerabilities using
+[SECURITY.md](SECURITY.md).
 
 ## License
 
-MIT
+[MIT](LICENSE). Dependencies retain their own licenses; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

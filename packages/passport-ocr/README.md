@@ -1,8 +1,11 @@
 # document-ocr
 
-Standalone document OCR for Node.js, optimized for passport biodata pages. Extracts MRZ data, passport fields, and classifies unsupported passport pages without requiring an external service.
+Local-first document OCR for Node.js. It extracts structured fields from
+passports and Indian PAN, Aadhaar, driving-licence, and voter-ID documents
+using a bundled Python/RapidOCR pipeline.
 
-`DocumentOCR` is the primary v2 API. `PassportOCR` remains available as a compatibility alias.
+> This is beta extraction software. It does not verify document authenticity,
+> detect fraud, query issuing authorities, or by itself satisfy KYC obligations.
 
 ## Install
 
@@ -10,76 +13,57 @@ Standalone document OCR for Node.js, optimized for passport biodata pages. Extra
 npm install document-ocr
 ```
 
-**Prerequisites:** Python 3.12+ must be installed on your machine. The postinstall script automatically creates a virtual environment and installs PaddleOCR.
+Python 3.12 or 3.13 is required. If [`uv`](https://docs.astral.sh/uv/) is
+available, the postinstall script can create the local environment
+automatically.
 
-## Quick Start
+## Local mode
 
 ```typescript
 import { DocumentOCR } from 'document-ocr'
 
 const ocr = new DocumentOCR()
-const result = await ocr.scan(imageFile)
+const result = await ocr.scan(imageBuffer)
 
 if (result.status === 'success') {
-  console.log(result.fields.surname)
-  console.log(result.fields.passportNumber)
-  console.log(result.fields.dateOfBirth)
-  console.log(result.mrzValid)
-}
-
-if (result.status === 'unsupported_page') {
-  console.log(result.pageType)          // 'passport_non_biodata'
-  console.log(result.unsupportedReason) // 'NON_BIODATA_PAGE'
+  switch (result.documentType) {
+    case 'passport':
+      console.log(result.fields?.passportNumber)
+      break
+    case 'pan':
+      console.log(result.panFields?.panNumber)
+      break
+    case 'aadhaar':
+      console.log(result.aadhaarFields?.aadhaarLast4)
+      break
+  }
 }
 
 await ocr.stop()
 ```
 
-## How It Works
+Local mode starts the bundled FastAPI process on `127.0.0.1`, reuses it across
+scans, and stops it when `ocr.stop()` is called. Documents stay on the local
+machine.
 
-```
-npm install document-ocr
-  │
-  └── postinstall:
-      1. Finds Python 3.12+
-      2. Creates .venv inside the package
-      3. Installs PaddleOCR + dependencies
+`PassportOCR` remains available as a compatibility alias for `DocumentOCR`.
 
-ocr.scan(image)
-  │
-  └── First call:
-      1. Auto-starts a local Python server
-      2. Loads OCR models
-      3. Runs a fast page classifier
-      4. Either:
-         - extracts passport biodata fields and MRZ, or
-         - returns an unsupported-page result
+## Other modes
 
-      Subsequent calls:
-      1. Reuses the running server
-      2. Reuses warmed OCR models
-```
-
-## Modes
-
-### Local Mode (default)
-
-```typescript
-const ocr = new DocumentOCR()
-const result = await ocr.scan(image)
-await ocr.stop()
-```
-
-### HTTP Mode
+### HTTP
 
 ```typescript
 const ocr = new DocumentOCR({
   mode: 'http',
-  endpoint: 'https://your-ocr-service.example.com',
+  endpoint: 'https://ocr.example.com',
+  apiKey: process.env.DOCUMENT_OCR_API_TOKEN,
 })
 ```
 
-### Lambda Mode
+`apiKey` is sent as a Bearer token. The included Python server enforces it when
+`DOCUMENT_OCR_API_TOKEN` is configured.
+
+### AWS Lambda
 
 ```typescript
 const ocr = new DocumentOCR({
@@ -88,136 +72,32 @@ const ocr = new DocumentOCR({
 })
 ```
 
-## API
+Lambda mode uses IAM-authenticated direct invocation through the AWS SDK.
 
-### `new DocumentOCR(options?)`
+## Options
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `mode` | `'local' \| 'http' \| 'lambda'` | `'local'` | Invocation mode |
-| `endpoint` | `string` | — | Required for `'http'` mode |
-| `functionName` | `string` | — | Required for `'lambda'` mode |
-| `timeoutMs` | `number` | `30000` | Request timeout (ms) |
-| `retries` | `number` | `2` | Retry count with exponential backoff |
-| `apiKey` | `string` | — | Optional Bearer token for HTTP mode |
+| `mode` | `local \| http \| lambda` | `local` | Invocation mode |
+| `endpoint` | `string` | — | Required in HTTP mode |
+| `functionName` | `string` | — | Required in Lambda mode |
+| `timeoutMs` | `number` | `30000` | Per-attempt timeout |
+| `retries` | `number` | `2` | Retry count |
+| `apiKey` | `string` | — | Bearer token for HTTP mode |
 
-### `ocr.scan(image): Promise<DocumentScanResult>`
+Accepted image inputs are `File`, `Blob`, `Buffer`, `ArrayBuffer`, base64
+strings, and HTTP(S) URLs.
 
-| Input type | Example |
-|---|---|
-| `File` | From `<input type="file">` |
-| `Blob` | From fetch response |
-| `Buffer` | `fs.readFileSync('passport.jpg')` |
-| `ArrayBuffer` | Raw bytes |
-| `string` (base64) | `"iVBORw0KGgo..."` |
-| `string` (URL) | `"https://example.com/passport.jpg"` |
+Set `PASSPORT_OCR_SKIP_PYTHON=1` during installation to skip local Python setup
+when only HTTP or Lambda mode is required.
 
-### `ocr.stop(): Promise<void>`
+## Privacy
 
-Stops the local Python server. Call when done to free resources.
-
-### `DocumentScanResult`
-
-```typescript
-type DocumentScanResult =
-  | {
-      status: 'success'
-      documentType: 'passport'
-      pageType: 'passport_biodata'
-      confidence: number
-      lowConfidence: boolean
-      fields: {
-        surname: string | null
-        givenNames: string | null
-        fullName: string | null
-        passportNumber: string | null
-        nationality: string | null
-        dateOfBirth: string | null
-        sex: 'M' | 'F' | 'X' | null
-        expiryDate: string | null
-        issueDate: string | null
-        placeOfBirth: string | null
-        countryCode: string | null
-      }
-      mrzRaw: [string, string] | null
-      mrzValid: boolean
-      unsupportedReason: null
-      probeText: string[]
-      errors: string[]
-      warnings: string[]
-      processingMs: number
-    }
-  | {
-      status: 'unsupported_page'
-      documentType: 'passport' | 'unknown'
-      pageType: 'passport_non_biodata' | 'unknown'
-      confidence: number
-      lowConfidence: boolean
-      fields: null
-      mrzRaw: null
-      mrzValid: boolean
-      unsupportedReason: 'NON_BIODATA_PAGE' | 'UNSUPPORTED_DOCUMENT'
-      probeText: string[]
-      errors: string[]
-      warnings: string[]
-      processingMs: number
-    }
-  | {
-      status: 'failure'
-      documentType: 'passport' | 'unknown'
-      pageType: 'passport_biodata' | 'unknown'
-      confidence: number
-      lowConfidence: boolean
-      fields: PassportFields | null
-      mrzRaw: [string, string] | null
-      mrzValid: boolean
-      unsupportedReason: null
-      probeText: string[]
-      errors: string[]
-      warnings: string[]
-      processingMs: number
-    }
-```
-
-## Benchmark Gates
-
-The Python benchmark reads fixture expectations from `sample-passports/manifest.json` and enforces these vNext targets:
-
-- Warm passport biodata median latency at or below 5000ms
-- Passport biodata field accuracy at or above 97%
-- MRZ exact-match rate at or above 99%
-- Non-biodata passport-page classification accuracy at or above 95%
-
-Run it with:
-
-```bash
-uv run python benchmarks/accuracy.py
-```
-
-## Environment Variables
-
-| Variable | Description |
-|---|---|
-| `PASSPORT_OCR_SKIP_PYTHON=1` | Skip Python setup during postinstall |
-
-## Error Handling
-
-```typescript
-const result = await ocr.scan(image)
-
-if (result.status === 'failure') {
-  if (result.errors.includes('IMAGE_TOO_BLURRY')) {
-    // Ask user to retake with better focus
-  }
-  if (result.errors.includes('RESOLUTION_TOO_LOW')) {
-    // Image too small
-  }
-  if (result.lowConfidence && result.fields) {
-    console.log(result.fields) // partial extraction
-  }
-}
-```
+HTTP and Lambda modes transmit identity documents to the configured
+infrastructure. Protect the endpoint, avoid logging extracted personal data,
+and define an appropriate retention policy. Never submit real identity
+documents to public issues or test fixtures.
 
 ## License
 
-MIT
+[MIT](LICENSE)

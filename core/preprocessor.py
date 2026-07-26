@@ -67,6 +67,8 @@ def _load_image(source: Union[str, bytes, Path]) -> np.ndarray:
         return img
 
     # bytes
+    if source.startswith(b"%PDF-"):
+        return _load_pdf_first_page(source)
     arr = np.frombuffer(source, dtype=np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     if img is None:
@@ -74,22 +76,31 @@ def _load_image(source: Union[str, bytes, Path]) -> np.ndarray:
     return img
 
 
-def _load_pdf_first_page(path: str) -> np.ndarray:
-    """Extract first page of a PDF as an image."""
+def _load_pdf_first_page(source: Union[str, bytes, Path]) -> np.ndarray:
+    """Render the first page of a PDF as a BGR image at 300 DPI."""
     try:
-        import fitz  # PyMuPDF
-    except ImportError:
-        raise ImportError("PyMuPDF (fitz) is required for PDF support: pip install pymupdf")
-    doc = fitz.open(path)
-    page = doc[0]
-    pix = page.get_pixmap(dpi=300)
-    img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.h, pix.w, pix.n)
-    if pix.n == 4:
-        img = cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
-    else:
-        img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-    doc.close()
-    return img
+        import pypdfium2 as pdfium
+    except ImportError as exc:
+        raise ImportError(
+            "pypdfium2 is required for PDF support: pip install pypdfium2"
+        ) from exc
+
+    document = pdfium.PdfDocument(source)
+    if len(document) == 0:
+        document.close()
+        raise ValueError("PDF contains no pages")
+
+    page = document[0]
+    bitmap = None
+    try:
+        bitmap = page.render(scale=300 / 72)
+        pil_image = bitmap.to_pil().convert("RGB")
+        return cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
+    finally:
+        if bitmap is not None:
+            bitmap.close()
+        page.close()
+        document.close()
 
 
 def _load_heic(path: str) -> np.ndarray:
