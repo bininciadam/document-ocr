@@ -1,14 +1,14 @@
 [project]
 name = "india-document-ocr"
-version = "2.2.0"
-description = "High-accuracy OCR pipeline for passports and Indian KYC documents (PAN, Aadhaar, driving licence, voter ID)"
+version = "3.0.0"
+description = "Local OCR pipeline for passports and Indian KYC documents, including PAN, Aadhaar, DL, voter ID, NREGA, and NPR letters"
 requires-python = ">=3.12"
 license = { file = "LICENSE" }
 readme = "README.md"
 authors = [
     { name = "Piyush Gambhir" },
 ]
-keywords = ["ocr", "passport", "aadhaar", "pan", "kyc", "rapidocr"]
+keywords = ["ocr", "passport", "aadhaar", "pan", "kyc", "nrega", "npr", "rapidocr"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "License :: OSI Approved :: MIT License",

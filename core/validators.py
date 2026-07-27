@@ -8,6 +8,7 @@ because these documents use different identifier schemes:
   * Aadhaar — 12 digits, last digit a Verhoeff checksum over the first 11
   * EPIC    — 3 letters + 7 digits (Voter ID)
   * DL      — state code + RTO + year + serial (format varies; loose check)
+  * NREGA   — state-prefixed hierarchical job-card number (format only)
 """
 
 from __future__ import annotations
@@ -77,6 +78,35 @@ def normalize_dl(text: str) -> str | None:
 def is_valid_dl(text: str) -> bool:
     dl = normalize_dl(text)
     return dl is not None and bool(_DL_RE.match(dl))
+
+
+# ---------------------------------------------------------------------------
+# NREGA / MGNREGA job-card number
+# State-issued identifiers vary in component widths, but the common public
+# form is a two-letter state prefix followed by at least three numeric
+# hierarchy components, for example RJ-27-001-002-0008147/00.
+# ---------------------------------------------------------------------------
+
+_NREGA_JOB_CARD_RE = re.compile(
+    r"^[A-Z]{2}-[0-9]{1,10}(?:[-/][0-9]{1,10}){2,7}$"
+)
+
+
+def normalize_nrega_job_card(text: str) -> str | None:
+    """Return a canonical NREGA job-card number, or ``None``.
+
+    This is a conservative shape check, not an issuer lookup or authenticity
+    check. OCR character correction belongs in the extractor, where it can be
+    applied only to a labelled job-card-number candidate.
+    """
+    compact = text.upper().strip()
+    compact = compact.replace("–", "-").replace("—", "-")
+    compact = re.sub(r"\s+", "", compact)
+    return compact if _NREGA_JOB_CARD_RE.fullmatch(compact) else None
+
+
+def is_valid_nrega_job_card(text: str) -> bool:
+    return normalize_nrega_job_card(text) is not None
 
 
 # ---------------------------------------------------------------------------

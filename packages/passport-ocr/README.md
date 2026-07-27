@@ -1,11 +1,14 @@
 # document-ocr
 
 Local-first document OCR for Node.js. It extracts structured fields from
-passports and Indian PAN, Aadhaar, driving-licence, and voter-ID documents
-using a bundled Python/RapidOCR pipeline.
+passports and Indian PAN, Aadhaar, driving-licence, voter-ID,
+MGNREGA/NREGA-job-card, and NPR-letter documents using a bundled
+Python/RapidOCR pipeline.
 
 > This is beta extraction software. It does not verify document authenticity,
 > detect fraud, query issuing authorities, or by itself satisfy KYC obligations.
+> NREGA and NPR extraction is experimental until measured against a
+> representative private image dataset.
 
 ## Install
 
@@ -36,6 +39,12 @@ if (result.status === 'success') {
     case 'aadhaar':
       console.log(result.aadhaarFields?.aadhaarLast4)
       break
+    case 'nrega_job_card':
+      console.log(result.nregaJobCardFields?.jobCardNumber)
+      break
+    case 'npr_letter':
+      console.log(result.nprLetterFields?.referenceNumber)
+      break
   }
 }
 
@@ -47,6 +56,18 @@ scans, and stops it when `ocr.stop()` is called. Documents stay on the local
 machine.
 
 `PassportOCR` remains available as a compatibility alias for `DocumentOCR`.
+
+For non-passport results, `status: 'success'` requires the document-specific
+minimum fields and a conservative OCR-region confidence gate.
+`identifierValid` reports only a local format/checksum check, not authenticity;
+`missingRequiredFields` explains partial failures. In HTTP mode these
+structured partial results use status `422` and are returned by the client
+rather than thrown.
+
+Set `DOCUMENT_OCR_KYC_LANGS=en,devanagari` (or `latin`, `ka`, `ta`, `te`) to
+run known recognition models on the non-passport path. Each additional model
+adds latency and memory, so choose the list from measured language slices.
+Unsupported names or more than four models fail server readiness.
 
 ## Other modes
 

@@ -1,6 +1,8 @@
 name: Test
 
 on:
+  push:
+    branches: [main]
   pull_request:
     branches: [main]
 
@@ -21,9 +23,6 @@ jobs:
 
       - name: Run tests
         run: uv run pytest tests/python -v
-
-      - name: Run benchmark
-        run: uv run python benchmarks/accuracy.py
 
   typescript:
     runs-on: ubuntu-latest

@@ -4,7 +4,8 @@ Local-first OCR pipeline for passports and Indian KYC documents. It
 preprocesses scans, classifies the document, runs targeted OCR with RapidOCR
 (PP-OCRv5), and extracts structured fields—including passport MRZ data, Indian
 passport back-page fields, and identifier/holder fields for PAN, Aadhaar,
-driving licences, and voter IDs.
+driving licences, voter IDs, MGNREGA/NREGA job cards, and National Population
+Register (NPR) name-and-address letters.
 
 Ships as a Python package with a FastAPI server, plus an npm wrapper at [`packages/passport-ocr`](packages/passport-ocr) that auto-spawns the Python server for Node.js consumers.
 
@@ -24,8 +25,28 @@ Ships as a Python package with a FastAPI server, plus an npm wrapper at [`packag
 | Aadhaar (front/back) | Aadhaar no. (+ VID, masked-card support), name, DOB/YOB, gender, address, pincode | Verhoeff checksum |
 | Driving licence | DL no., name, DOB, issue/validity dates (NT + TR), address, blood group, vehicle class | DL format |
 | Voter ID (EPIC) | EPIC no., name, relation name + type, gender, DOB/age | EPIC format |
+| MGNREGA/NREGA job card | job-card no., household head, registration/validity, location, category/BPL, adult members | Conservative hierarchical format |
+| NPR name/address letter | reference no., resident name, address, pincode, issue date | Not offline-verifiable |
 
-The document type is detected automatically; `/scan` returns the matching field block (`fields`/`backPageFields` for passports, `panFields`/`aadhaarFields`/`drivingLicenceFields`/`voterIdFields` for the others) keyed by `documentType`.
+Together with the existing passport path, this covers the officially valid
+document categories listed in the
+[RBI KYC Master Direction](https://www.rbi.org.in/Scripts/BS_ViewMasDirections.aspx?id=11566);
+PAN is supported as a separate tax identifier.
+
+The document type is detected automatically; `/scan` returns the matching
+field block (`fields`/`backPageFields` for passports, or `panFields`,
+`aadhaarFields`, `drivingLicenceFields`, `voterIdFields`,
+`nregaJobCardFields`, or `nprLetterFields`) keyed by `documentType`.
+
+NREGA and NPR support is experimental until measured against a representative
+private image dataset. The extraction layer handles multiple label/layout
+variants, but deterministic text-region tests are not evidence of real-image
+accuracy.
+
+To keep passport OCR behavior unchanged, a positive passport-page probe is
+never overridden by the KYC router. A driving licence or voter card whose crop
+contains multiple passport-like labels can therefore remain ambiguous; an
+explicit KYC-only entry point is tracked as future work.
 
 ## Quickstart
 
@@ -86,14 +107,16 @@ The package auto-creates a `.venv`, installs the Python deps, and manages the lo
 internally. Set `DOCUMENT_OCR_API_TOKEN` to require
 `Authorization: Bearer <token>` on `/scan`. For internet-facing deployments,
 use platform IAM or an API gateway in addition to application-level controls.
+Incomplete or semantically invalid non-passport extractions return HTTP `422`
+with the full structured failure result.
 
 ## Output
 
 ```jsonc
 {
   "status": "success",                  // success | failure | unsupported_page
-  "documentType": "passport",           // passport | pan | aadhaar | driving_licence | voter_id | unknown
-  "pageType": "passport_biodata",       // passport_biodata | passport_non_biodata | pan | aadhaar | driving_licence | voter_id | unknown
+  "documentType": "passport",           // passport | pan | aadhaar | driving_licence | voter_id | nrega_job_card | npr_letter | unknown
+  "pageType": "passport_biodata",       // same document values, plus passport_biodata | passport_non_biodata | unknown
   "confidence": 0.91,
   "fields": {
     "surname": "...", "givenNames": "...", "fullName": "...",
@@ -119,8 +142,18 @@ use platform IAM or an API gateway in addition to application-level controls.
                             "classOfVehicle": "...", "validityDateTransport": null },
   "voterIdFields":        { "epicNumber": "...", "name": "...", "relationName": "...", "relationType": "father",
                             "gender": "...", "dateOfBirth": "...", "age": null },
+  "nregaJobCardFields":   { "jobCardNumber": "...", "headOfHousehold": "...", "category": "SC",
+                            "registrationDate": "...", "validityFrom": "...", "validityTo": "...",
+                            "address": "...", "village": "...", "gramPanchayat": "...", "block": "...",
+                            "district": "...", "state": "...", "bplStatus": true, "familyId": "...",
+                            "members": [{ "serialNumber": "1", "name": "...",
+                                          "fatherOrHusbandName": "...", "gender": "FEMALE", "age": 39 }] },
+  "nprLetterFields":      { "referenceNumber": "...", "name": "...", "address": "...",
+                            "pincode": "...", "issueDate": "..." },
   "mrzRaw": ["P<IND...", "..."], "mrzValid": true,
   "lowConfidence": false,
+  "identifierValid": null,              // format/checksum only; never an authenticity verdict
+  "missingRequiredFields": [],
   "errors": [], "warnings": [],
   "processingMs": 412
 }
@@ -131,7 +164,37 @@ use platform IAM or an API gateway in addition to application-level controls.
 1. `preprocess` — orientation, document boundary detection, perspective correction, quality checks
 2. `classify_passport_page` — biodata vs non-biodata vs not-a-passport (cheap bottom-crop probe)
 3. passport path: `run_ocr` (RapidOCR PP-OCRv5, full-page fallback when MRZ is missing) → `parse_mrz` (TD3 MRZ with per-field + overall checksum validation) → `extract_back_page` (bilingual label-aware extraction) → `validate` (cross-checks MRZ vs visual fields, computes confidence)
-4. non-passport path: `classify_document` routes full-page OCR to the matching extractor (`pan` / `aadhaar` / `driving_licence` / `voter_id`), validating each document's identifier (PAN format, Verhoeff for Aadhaar, EPIC/DL format)
+4. non-passport path: `classify_document` routes full-page OCR to the matching
+   extractor (`pan` / `aadhaar` / `driving_licence` / `voter_id` /
+   `nrega_job_card` / `npr_letter`), checks minimum required fields, validates
+   identifiers where possible, and fails closed on partial or semantically
+   implausible records
+
+For non-passport documents, `status: "success"` means the extractor returned
+the document-specific minimum field set and passed a conservative OCR-region
+confidence gate. Alternate model readings for the same detected geometry count
+once. `identifierValid` means only an offline format/checksum check passed. NPR
+references have no universal public checksum, so this value is `null`; it is
+never evidence of authenticity.
+
+### Non-passport OCR languages
+
+The default recognition behavior is unchanged (`en`, with the existing
+automatic fallback). If the expected KYC population uses a known script, run
+up to four recognition passes only on the non-passport path:
+
+```bash
+DOCUMENT_OCR_KYC_LANGS=en,devanagari make dev
+```
+
+Available values are `en`, `latin`, `devanagari`, `ka` (Kannada), `ta`
+(Tamil), and `te` (Telugu). Extra models increase latency and memory. The
+bundled RapidOCR version has no Bengali recognition model: Bengali-labelled
+extractor fixtures prove parsing behavior only, not Bengali image OCR. Select
+languages and release thresholds from measured benchmark slices. Server
+readiness initializes every configured model so model-download or startup
+failures are reported before the first scan. Unsupported names or more than
+four configured models fail readiness instead of silently falling back.
 
 Single entry point: `core.pipeline.scan(image_input)`.
 
@@ -183,15 +246,32 @@ The per-document extractors are covered by deterministic `TextRegion` fixtures
 under `tests/python/test_*_extractor.py`. These tests verify parsing and
 validation behavior; they are not a claim of real-world OCR accuracy.
 
-For image-level evaluation, place a private dataset and `manifest.json` under
-`benchmark-data/` and run:
+For the legacy passport image benchmark, place its private dataset and
+`manifest.json` under `benchmark-data/` and run:
 
 ```bash
 make benchmark
 ```
 
-The directory is ignored by Git. Never commit identity documents or personal
-data. See [CONTRIBUTING.md](CONTRIBUTING.md) for fixture rules.
+For a non-passport KYC dataset, use the versioned manifest and release gates:
+
+```bash
+make benchmark-kyc \
+  KYC_MANIFEST=/secure/kyc-eval/manifest.json \
+  KYC_DATASET_ROOT=/secure/kyc-eval \
+  KYC_REPORT=/secure/kyc-eval/reports/main.json
+```
+
+The KYC evaluator reports classification, acceptance/false-success,
+exact/normalized field, complete-record, runtime, per-document, and
+design/year/issuer/language/capture-quality slice metrics without copying
+ground-truth values into its report. Required per-document slices fail manifest
+validation when a declared variant is absent. See
+[`benchmarks/KYC_DATASET.md`](benchmarks/KYC_DATASET.md) for the variant matrix
+and annotation workflow.
+
+`benchmark-data/` is ignored by Git. Never commit identity documents or
+personal data. See [CONTRIBUTING.md](CONTRIBUTING.md) for fixture rules.
 
 ## Privacy and security
 

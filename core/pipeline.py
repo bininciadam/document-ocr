@@ -16,7 +16,14 @@ from .aadhaar_extractor import AadhaarFields, extract_aadhaar
 from .back_page_extractor import BackPageFields, extract_back_page
 from .document_classifier import classify_document
 from .driving_licence_extractor import DrivingLicenceFields, extract_driving_licence
+from .kyc_ocr import run_kyc_ocr
+from .kyc_validation import (
+    MIN_OCR_GEOMETRY_CONFIDENCE_FOR_SUCCESS,
+    assess_kyc_extraction,
+)
 from .mrz_parser import MRZResult, parse_mrz
+from .npr_extractor import NprLetterFields, extract_npr_letter
+from .nrega_extractor import NregaFields, extract_nrega
 from .ocr_engine import TextRegion, run_ocr
 from .page_classifier import classify_passport_page
 from .pan_extractor import PanFields, extract_pan
@@ -54,10 +61,14 @@ class DocumentScanResult:
     aadhaar_fields: Optional[AadhaarFields] = None
     driving_licence_fields: Optional[DrivingLicenceFields] = None
     voter_id_fields: Optional[VoterIdFields] = None
+    nrega_job_card_fields: Optional[NregaFields] = None
+    npr_letter_fields: Optional[NprLetterFields] = None
     mrz_raw: Optional[tuple[str, str]] = None
     mrz_valid: bool = False
     low_confidence: bool = False
     unsupported_reason: Optional[str] = None
+    identifier_valid: Optional[bool] = None
+    missing_required_fields: list[str] = field(default_factory=list)
     probe_text: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -75,10 +86,14 @@ class DocumentScanResult:
             "aadhaarFields": _dataclass_to_camel_dict(self.aadhaar_fields),
             "drivingLicenceFields": _dataclass_to_camel_dict(self.driving_licence_fields),
             "voterIdFields": _dataclass_to_camel_dict(self.voter_id_fields),
+            "nregaJobCardFields": _dataclass_to_camel_dict(self.nrega_job_card_fields),
+            "nprLetterFields": _dataclass_to_camel_dict(self.npr_letter_fields),
             "mrzRaw": list(self.mrz_raw) if self.mrz_raw else None,
             "mrzValid": self.mrz_valid,
             "lowConfidence": self.low_confidence,
             "unsupportedReason": self.unsupported_reason,
+            "identifierValid": self.identifier_valid,
+            "missingRequiredFields": self.missing_required_fields,
             "probeText": self.probe_text,
             "errors": self.errors,
             "warnings": self.warnings,
@@ -104,6 +119,21 @@ def scan(image_input: Union[str, bytes, Path]) -> DocumentScanResult:
 
     regions = _extract_targeted_regions(prep.image)
     if not regions:
+        # The cheap probe uses a bottom crop. A non-passport document can have
+        # all useful text elsewhere, especially with an explicitly configured
+        # Indic recognition model. Confirm a strongly identified KYC document
+        # from the full page before preserving the existing no-text failure.
+        full_kyc_regions = run_kyc_ocr(prep.image)
+        if full_kyc_regions:
+            full_kyc_cls = classify_document(full_kyc_regions)
+            if _is_strong_non_passport_classification(full_kyc_cls):
+                return _scan_non_passport(
+                    prep,
+                    None,
+                    start,
+                    full_regions=full_kyc_regions,
+                    doc_cls=full_kyc_cls,
+                )
         return DocumentScanResult(
             status="failure",
             document_type="unknown",
@@ -210,20 +240,45 @@ _NON_PASSPORT_EXTRACTORS = {
     "aadhaar": ("aadhaar_fields", extract_aadhaar),
     "driving_licence": ("driving_licence_fields", extract_driving_licence),
     "voter_id": ("voter_id_fields", extract_voter_id),
+    "nrega_job_card": ("nrega_job_card_fields", extract_nrega),
+    "npr_letter": ("npr_letter_fields", extract_npr_letter),
+}
+
+_STRONG_NON_PASSPORT_REASON_PREFIXES = {
+    "pan": ("PAN_KEYWORDS_",),
+    "aadhaar": ("AADHAAR_KEYWORDS_",),
+    "driving_licence": ("DL_KEYWORDS_",),
+    "voter_id": ("VOTER_KEYWORDS_",),
+    "nrega_job_card": ("NREGA_",),
+    "npr_letter": ("NPR_",),
 }
 
 
-def _has_extracted_value(obj) -> bool:
-    """True if any string field on a per-document dataclass is populated."""
-    return any(
-        isinstance(getattr(obj, f.name), str) and getattr(obj, f.name)
-        for f in dataclass_fields(obj)
+def _is_strong_non_passport_classification(classification) -> bool:
+    prefixes = _STRONG_NON_PASSPORT_REASON_PREFIXES.get(
+        classification.document_type
+    )
+    return bool(
+        prefixes
+        and classification.confidence >= 0.86
+        and any(
+            reason.startswith(prefixes)
+            for reason in classification.reasons
+        )
     )
 
 
-def _scan_non_passport(prep, passport_classification, start: float) -> DocumentScanResult:
+def _scan_non_passport(
+    prep,
+    _passport_classification,
+    start: float,
+    *,
+    full_regions=None,
+    doc_cls=None,
+) -> DocumentScanResult:
     """Classify and extract a non-passport KYC document from full-page OCR."""
-    full_regions = run_ocr(prep.image)
+    if full_regions is None:
+        full_regions = run_kyc_ocr(prep.image)
     if not full_regions:
         return DocumentScanResult(
             status="failure",
@@ -235,7 +290,8 @@ def _scan_non_passport(prep, passport_classification, start: float) -> DocumentS
             processing_ms=_elapsed_ms(start),
         )
 
-    doc_cls = classify_document(full_regions)
+    if doc_cls is None:
+        doc_cls = classify_document(full_regions)
     extractor_entry = _NON_PASSPORT_EXTRACTORS.get(doc_cls.document_type)
 
     if extractor_entry is None:
@@ -246,25 +302,41 @@ def _scan_non_passport(prep, passport_classification, start: float) -> DocumentS
             page_type="unknown",
             confidence=doc_cls.confidence,
             unsupported_reason="UNSUPPORTED_DOCUMENT",
-            probe_text=doc_cls.probe_text,
+            probe_text=[],
             warnings=prep.warnings + doc_cls.reasons,
             processing_ms=_elapsed_ms(start),
         )
 
     attr, extractor_fn = extractor_entry
-    fields = extractor_fn(full_regions)
-    confidence = round(doc_cls.confidence, 3)
-    has_value = _has_extracted_value(fields)
+    trusted_regions = [
+        region
+        for region in full_regions
+        if region.confidence >= MIN_OCR_GEOMETRY_CONFIDENCE_FOR_SUCCESS
+    ]
+    fields = extractor_fn(trusted_regions)
+    assessment = assess_kyc_extraction(
+        doc_cls.document_type,
+        fields,
+        trusted_regions,
+    )
+    confidence = round(
+        (doc_cls.confidence * 0.4) + (assessment.confidence * 0.6),
+        3,
+    )
+    if not assessment.complete:
+        confidence = min(confidence, 0.69)
 
     result = DocumentScanResult(
-        status="success" if has_value else "failure",
+        status="success" if assessment.complete else "failure",
         document_type=doc_cls.document_type,
         page_type=doc_cls.document_type,
         confidence=confidence,
         low_confidence=0.3 <= confidence < 0.7,
-        probe_text=doc_cls.probe_text,
-        errors=[] if has_value else ["LOW_CONFIDENCE_EXTRACTION"],
-        warnings=prep.warnings + doc_cls.reasons,
+        identifier_valid=assessment.identifier_valid,
+        missing_required_fields=assessment.missing_required_fields,
+        probe_text=[],
+        errors=assessment.errors,
+        warnings=prep.warnings + doc_cls.reasons + assessment.warnings,
         processing_ms=_elapsed_ms(start),
     )
     setattr(result, attr, fields)
@@ -302,7 +374,26 @@ def _dataclass_to_camel_dict(obj) -> Optional[dict]:
     """Serialise a per-document field dataclass to a camelCase dict (or None)."""
     if obj is None:
         return None
-    return {_snake_to_camel(f.name): getattr(obj, f.name) for f in dataclass_fields(obj)}
+    return {
+        _snake_to_camel(f.name): _serialise_dataclass_value(getattr(obj, f.name))
+        for f in dataclass_fields(obj)
+    }
+
+
+def _serialise_dataclass_value(value):
+    """Recursively serialise nested extractor dataclasses and collections."""
+    if hasattr(value, "__dataclass_fields__"):
+        return _dataclass_to_camel_dict(value)
+    if isinstance(value, list):
+        return [_serialise_dataclass_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [_serialise_dataclass_value(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _serialise_dataclass_value(item)
+            for key, item in value.items()
+        }
+    return value
 
 
 def _back_page_fields_to_dict(fields: Optional[BackPageFields]) -> Optional[dict]:

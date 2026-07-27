@@ -94,6 +94,54 @@ class TestReady:
             server_module._models_ready = original_ready
             server_module._model_init_error = original_err
 
+    async def test_lifespan_clears_a_transient_model_error(
+        self,
+        monkeypatch,
+    ):
+        original_ready = server_module._models_ready
+        original_err = server_module._model_init_error
+        try:
+            monkeypatch.setattr(
+                server_module,
+                "_warm_up_ocr",
+                MagicMock(
+                    side_effect=OCRModelInitError("temporary model failure")
+                ),
+            )
+            async with server_module._lifespan(app):
+                assert server_module._models_ready is False
+                assert "temporary model failure" in (
+                    server_module._model_init_error or ""
+                )
+
+            monkeypatch.setattr(
+                server_module,
+                "_warm_up_ocr",
+                MagicMock(return_value=None),
+            )
+            async with server_module._lifespan(app):
+                assert server_module._models_ready is True
+                assert server_module._model_init_error is None
+        finally:
+            server_module._models_ready = original_ready
+            server_module._model_init_error = original_err
+
+
+def test_warm_up_initializes_configured_kyc_models(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "core.kyc_ocr.configured_kyc_languages",
+        lambda: ("en", "devanagari", "ta"),
+    )
+    monkeypatch.setattr(
+        "core.ocr_engine._get_ocr",
+        lambda language: calls.append(language),
+    )
+
+    server_module._warm_up_ocr()
+
+    assert calls == ["en", "devanagari", "ta"]
+
 
 class TestScan:
     async def test_scan_requires_configured_bearer_token(self, client, small_image):

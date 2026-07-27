@@ -27,7 +27,10 @@ fixtures must be generated, contain fictitious data, and carry a prominent
 snapshots, logs, or commit messages.
 
 Private accuracy datasets can be placed in `benchmark-data/`, which is ignored
-by Git.
+by Git. Non-passport datasets must follow
+[`benchmarks/KYC_DATASET.md`](benchmarks/KYC_DATASET.md): use the versioned
+manifest, record design/year/language/capture-quality slices, and keep the
+locked release split separate from tuning data.
 
 ## Pull requests
 

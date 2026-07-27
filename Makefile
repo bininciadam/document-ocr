@@ -1,4 +1,4 @@
-.PHONY: dev test test-py test-ts build benchmark docker-build install sync
+.PHONY: dev test test-py test-ts build benchmark benchmark-kyc docker-build install sync
 
 install:
 	uv sync
@@ -20,6 +20,10 @@ build:
 
 benchmark:
 	uv run python benchmarks/accuracy.py
+
+benchmark-kyc:
+	@test -n "$(KYC_MANIFEST)" || (echo "Set KYC_MANIFEST=/secure/path/manifest.json"; exit 2)
+	uv run python benchmarks/kyc_accuracy.py --manifest "$(KYC_MANIFEST)" $(if $(KYC_DATASET_ROOT),--dataset-root "$(KYC_DATASET_ROOT)",) $(if $(KYC_REPORT),--output "$(KYC_REPORT)",)
 
 sync:
 	cd packages/passport-ocr && bash scripts/sync-python.sh

@@ -173,34 +173,53 @@ export class LocalServer {
     process.on('SIGTERM', cleanup)
 
     // Wait for the server to be ready
-    const healthPromise = this._waitForHealth(endpoint)
+    const readinessPromise = this._waitForReady(endpoint)
 
-    // Race between health check succeeding and process dying
-    const result = await Promise.race([healthPromise, exitPromise])
+    // Race between readiness succeeding and process dying
+    const result = await Promise.race([readinessPromise, exitPromise])
     return result
   }
 
-  private async _waitForHealth(endpoint: string): Promise<string> {
-    const healthUrl = `${endpoint}/health`
+  private async _waitForReady(endpoint: string): Promise<string> {
+    const readinessUrl = `${endpoint}/ready`
     const startTime = Date.now()
 
     while (Date.now() - startTime < HEALTH_TIMEOUT_MS) {
+      let terminalFailure: string | null = null
       try {
-        const res = await fetch(healthUrl, {
+        const res = await fetch(readinessUrl, {
           signal: AbortSignal.timeout(2000),
         })
-        if (res.ok) {
+        const body = (await res.json().catch(() => null)) as {
+          status?: unknown
+          error?: unknown
+        } | null
+        if (res.ok && body?.status === 'ready') {
           return endpoint
+        }
+        if (body?.status === 'model_init_failed') {
+          const detail =
+            typeof body.error === 'string'
+              ? body.error.replace(/\s+/g, ' ').slice(0, 500)
+              : 'configured OCR model initialization failed'
+          terminalFailure = detail
         }
       } catch {
         // Server not ready yet, keep polling
+      }
+
+      if (terminalFailure) {
+        await this.stop()
+        throw new Error(
+          `document-ocr: OCR model initialization failed: ${terminalFailure}`,
+        )
       }
 
       await new Promise((r) => setTimeout(r, HEALTH_POLL_INTERVAL_MS))
     }
 
     // Timed out
-    this.stop()
+    await this.stop()
     throw new Error(
       `document-ocr: Python server did not become ready within ${HEALTH_TIMEOUT_MS / 1000}s. ` +
         'This might happen on first run while models are being downloaded.',

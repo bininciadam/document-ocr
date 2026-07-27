@@ -70,6 +70,40 @@ export interface VoterIdFields {
   age: string | null
 }
 
+export interface NregaMember {
+  serialNumber: string | null
+  name: string | null
+  fatherOrHusbandName: string | null
+  gender: 'MALE' | 'FEMALE' | 'TRANSGENDER' | null
+  age: number | null
+}
+
+export interface NregaJobCardFields {
+  jobCardNumber: string | null
+  headOfHousehold: string | null
+  category: string | null
+  registrationDate: string | null
+  validityFrom: string | null
+  validityTo: string | null
+  address: string | null
+  village: string | null
+  gramPanchayat: string | null
+  block: string | null
+  district: string | null
+  state: string | null
+  bplStatus: boolean | null
+  familyId: string | null
+  members: NregaMember[]
+}
+
+export interface NprLetterFields {
+  referenceNumber: string | null
+  name: string | null
+  address: string | null
+  pincode: string | null
+  issueDate: string | null
+}
+
 export type DocumentStatus = 'success' | 'unsupported_page' | 'failure'
 export type DocumentType =
   | 'passport'
@@ -77,6 +111,8 @@ export type DocumentType =
   | 'aadhaar'
   | 'driving_licence'
   | 'voter_id'
+  | 'nrega_job_card'
+  | 'npr_letter'
   | 'unknown'
 export type PageType =
   | 'passport_biodata'
@@ -85,6 +121,8 @@ export type PageType =
   | 'aadhaar'
   | 'driving_licence'
   | 'voter_id'
+  | 'nrega_job_card'
+  | 'npr_letter'
   | 'unknown'
 export type UnsupportedReason = 'UNSUPPORTED_DOCUMENT'
 
@@ -97,13 +135,17 @@ export interface BaseDocumentScanResult {
   mrzRaw: [string, string] | null
   mrzValid: boolean
   unsupportedReason: UnsupportedReason | null
+  identifierValid: boolean | null // offline checksum/format validation only; not authenticity
+  missingRequiredFields: string[]
   backPageFields: BackPageFields | null
-  // Per-document field blocks — null unless documentType matches. Additive:
-  // a passport result has all four null, a PAN result populates `panFields`, etc.
+  // Per-document field blocks — null unless documentType matches:
+  // a passport result has all blocks null, a PAN result populates `panFields`, etc.
   panFields: PanFields | null
   aadhaarFields: AadhaarFields | null
   drivingLicenceFields: DrivingLicenceFields | null
   voterIdFields: VoterIdFields | null
+  nregaJobCardFields: NregaJobCardFields | null
+  nprLetterFields: NprLetterFields | null
   probeText: string[]
   errors: string[]
   warnings: string[]

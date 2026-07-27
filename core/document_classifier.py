@@ -2,10 +2,11 @@
 Document-type router.
 
 Given OCR regions for a full document image, decides which supported document
-type it is — passport, PAN, Aadhaar, driving licence, or voter ID — using a
-combination of keyword hints and identifier-format signals. The pipeline calls
-this only when the cheap passport probe (page_classifier) did not already
-recognise a passport, and dispatches to the matching per-document extractor.
+type it is — passport, PAN, Aadhaar, driving licence, voter ID, NREGA job card,
+or NPR letter — using a combination of keyword hints and identifier-format
+signals. The pipeline uses it as the full-page KYC router and as a conservative
+confirmation step when generic biodata labels make the cheap passport probe
+ambiguous.
 """
 
 from __future__ import annotations
@@ -15,11 +16,11 @@ from dataclasses import dataclass, field
 from .ocr_engine import TextRegion
 from .page_classifier import _has_mrz_like_lines, _normalise_text
 from .validators import (
+    extract_aadhaar_number,
+    is_valid_aadhaar,
     normalize_dl,
     normalize_epic,
     normalize_pan,
-    extract_aadhaar_number,
-    is_valid_aadhaar,
 )
 
 # ---------------------------------------------------------------------------
@@ -40,9 +41,22 @@ _VOTER_KEYWORDS = [
     "ELECTION COMMISSION", "ELECTORS PHOTO IDENTITY", "ELECTOR",
     "ELECTION", "IDENTITY CARD",
 ]
+_NREGA_EXPLICIT_KEYWORDS = [
+    "MAHATMA GANDHI NATIONAL RURAL EMPLOYMENT GUARANTEE ACT",
+    "MAHATMA GANDHI NATIONAL RURAL EMPLOYMENT GUARANTEE SCHEME",
+    "MAHATMA GANDHI NREGA",
+    "MGNREGA",
+]
+_NREGA_JOB_CARD_KEYWORDS = ["JOB CARD", "EMPLOYMENT CARD"]
+_NREGA_RURAL_CONTEXT = [
+    "GRAM PANCHAYAT",
+    "RURAL EMPLOYMENT",
+    "EMPLOYMENT GUARANTEE",
+    "HOUSEHOLD MEMBERS WILLING TO WORK",
+]
+_NPR_TITLE_KEYWORDS = ["NATIONAL POPULATION REGISTER"]
+_NPR_ISSUER_KEYWORDS = ["REGISTRAR GENERAL", "CENSUS COMMISSIONER"]
 _PASSPORT_KEYWORDS = ["PASSPORT", "REPUBLIC OF INDIA PASSPORT"]
-
-_SUPPORTED = {"passport", "pan", "aadhaar", "driving_licence", "voter_id"}
 
 
 @dataclass
@@ -62,7 +76,19 @@ def _count_keyword_matches(normalised_regions: list[str], keywords: list[str]) -
             if padded in f" {region_text} ":
                 matched.add(norm_kw)
                 break
-    return len(matched)
+    # Treat nested phrases as one piece of evidence.  For example,
+    # ``ELECTION COMMISSION`` must not also count as an independent match for
+    # ``ELECTION`` merely because both strings occur in the same phrase.
+    independent = {
+        keyword
+        for keyword in matched
+        if not any(
+            keyword != other
+            and f" {keyword} " in f" {other} "
+            for other in matched
+        )
+    }
+    return len(independent)
 
 
 def _any_token(regions: list[TextRegion], normalizer) -> bool:
@@ -74,13 +100,57 @@ def classify_document(regions: list[TextRegion]) -> DocumentClassification:
     probe_text = [r.text.strip() for r in regions if r.text.strip()][:15]
     normalised_regions = [_normalise_text(r.text) for r in regions if r.text.strip()]
     joined_raw = " ".join(r.text for r in regions if r.text.strip())
+    joined_normalised = _normalise_text(joined_raw)
 
     # --- per-type evidence ---
     pan_kw = _count_keyword_matches(normalised_regions, _PAN_KEYWORDS)
     aadhaar_kw = _count_keyword_matches(normalised_regions, _AADHAAR_KEYWORDS)
     dl_kw = _count_keyword_matches(normalised_regions, _DL_KEYWORDS)
     voter_kw = _count_keyword_matches(normalised_regions, _VOTER_KEYWORDS)
+    nrega_explicit_kw = _count_keyword_matches(
+        normalised_regions, _NREGA_EXPLICIT_KEYWORDS
+    )
+    nrega_explicit_kw = max(
+        nrega_explicit_kw,
+        _count_keyword_matches([joined_normalised], _NREGA_EXPLICIT_KEYWORDS),
+    )
+    nrega_job_card_kw = _count_keyword_matches(
+        normalised_regions, _NREGA_JOB_CARD_KEYWORDS
+    )
+    nrega_context_kw = _count_keyword_matches(
+        normalised_regions, _NREGA_RURAL_CONTEXT
+    )
+    npr_title_kw = _count_keyword_matches(normalised_regions, _NPR_TITLE_KEYWORDS)
+    npr_title_kw = max(
+        npr_title_kw,
+        _count_keyword_matches([joined_normalised], _NPR_TITLE_KEYWORDS),
+    )
+    npr_issuer_kw = _count_keyword_matches(normalised_regions, _NPR_ISSUER_KEYWORDS)
     passport_kw = _count_keyword_matches(normalised_regions, _PASSPORT_KEYWORDS)
+
+    nrega_hindi_titles = (
+        "राष्ट्रीय ग्रामीण रोजगार गारंटी",
+        "महात्मा गांधी राष्ट्रीय ग्रामीण रोजगार गारंटी",
+    )
+    has_nrega_hindi_title = any(
+        title in joined_raw for title in nrega_hindi_titles
+    )
+    has_nrega_hindi_card_context = (
+        "जॉब कार्ड" in joined_raw
+        and any(
+            phrase in joined_raw
+            for phrase in ("ग्राम पंचायत", "रोजगार गारंटी")
+        )
+    )
+    has_nrega_acronym = any(
+        f" NREGA " in f" {region_text} " for region_text in normalised_regions
+    )
+    has_npr_hindi_title = (
+        "राष्ट्रीय जनसंख्या रजिस्टर" in joined_raw
+    )
+    has_npr_acronym = any(
+        f" NPR " in f" {region_text} " for region_text in normalised_regions
+    )
 
     has_pan = _any_token(regions, normalize_pan)
     aadhaar_number = extract_aadhaar_number(joined_raw)
@@ -118,6 +188,30 @@ def classify_document(regions: list[TextRegion]) -> DocumentClassification:
         add("voter_id", 2 * voter_kw, f"VOTER_KEYWORDS_{voter_kw}")
     if has_epic:
         add("voter_id", 3, "EPIC_FORMAT")
+
+    # NREGA cards do not have one public, nationally check-summed identifier
+    # shape. Require an explicit scheme title/acronym, or "Job Card" together
+    # with rural-employment context. A generic employee "job card" is not enough.
+    if nrega_explicit_kw or has_nrega_hindi_title:
+        add(
+            "nrega_job_card",
+            9 + min(nrega_explicit_kw, 2),
+            "NREGA_EXPLICIT_TITLE",
+        )
+    elif (
+        (has_nrega_acronym and (nrega_job_card_kw or nrega_context_kw))
+        or (nrega_job_card_kw and nrega_context_kw)
+        or has_nrega_hindi_card_context
+    ):
+        add("nrega_job_card", 8, "NREGA_JOB_CARD_CONTEXT")
+
+    # "NPR" is also used by unrelated organisations. Accept the acronym only
+    # alongside the issuing authority; the full English/Hindi title is strong
+    # enough by itself.
+    if npr_title_kw or has_npr_hindi_title:
+        add("npr_letter", 9, "NPR_EXPLICIT_TITLE")
+    elif has_npr_acronym and npr_issuer_kw:
+        add("npr_letter", 8, "NPR_ISSUER_CONTEXT")
 
     if passport_kw:
         add("passport", 2 * passport_kw, f"PASSPORT_KEYWORDS_{passport_kw}")

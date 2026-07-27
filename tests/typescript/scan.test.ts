@@ -81,11 +81,15 @@ function successBody(overrides: Record<string, unknown> = {}) {
     mrzValid: true,
     lowConfidence: false,
     unsupportedReason: null,
+    identifierValid: null,
+    missingRequiredFields: [],
     backPageFields: null,
     panFields: null,
     aadhaarFields: null,
     drivingLicenceFields: null,
     voterIdFields: null,
+    nregaJobCardFields: null,
+    nprLetterFields: null,
     probeText: [],
     errors: [],
     warnings: [],
@@ -148,6 +152,49 @@ describe('DocumentOCR.scan (http mode, real server)', () => {
       expect(result.panFields?.name).toBe('ROHIT SHARMA')
     }
     expect(result.fields).toBeNull()
+  })
+
+  it('returns nested NREGA member fields', async () => {
+    const nregaBody = successBody({
+      documentType: 'nrega_job_card',
+      pageType: 'nrega_job_card',
+      fields: null,
+      mrzValid: false,
+      identifierValid: true,
+      nregaJobCardFields: {
+        jobCardNumber: 'RJ-27-001-002-0008147/00',
+        headOfHousehold: 'SYNTHETIC PERSON',
+        category: 'SC',
+        registrationDate: '14/03/2019',
+        validityFrom: '01/04/2019',
+        validityTo: '31/03/2024',
+        address: null,
+        village: 'SYNTHETIC VILLAGE',
+        gramPanchayat: 'SYNTHETIC PANCHAYAT',
+        block: null,
+        district: 'SYNTHETIC DISTRICT',
+        state: 'SYNTHETIC STATE',
+        bplStatus: true,
+        familyId: null,
+        members: [
+          {
+            serialNumber: '1',
+            name: 'SYNTHETIC PERSON',
+            fatherOrHusbandName: null,
+            gender: 'FEMALE',
+            age: 39,
+          },
+        ],
+      },
+    })
+    const server = await withServer(() => ({ status: 200, body: nregaBody }))
+    const client = new DocumentOCR({ mode: 'http', endpoint: server.url })
+
+    const result = await client.scan(Buffer.from('fake-image-bytes'))
+
+    expect(result.documentType).toBe('nrega_job_card')
+    expect(result.identifierValid).toBe(true)
+    expect(result.nregaJobCardFields?.members[0]?.age).toBe(39)
   })
 
   it('retries on 5xx and then succeeds', async () => {

@@ -1,5 +1,58 @@
 # Changelog
 
+## 3.0.0 — 2026-07-27
+
+### Non-passport document coverage
+
+- Added conservative MGNREGA/NREGA job-card extraction for household,
+  registration/validity, administrative-location, BPL/category, family, and
+  repeating adult-member fields across English and selected Indian-script
+  label variants.
+- Added conservative National Population Register name-and-address-letter
+  extraction for labelled resident, address, pincode, reference, and issue-date
+  fields. Bare `NPR` acronyms are rejected without recognized issuer context.
+- Added automatic classification, pipeline result blocks
+  (`nregaJobCardFields`, `nprLetterFields`), and matching TypeScript contracts.
+
+### Accuracy and failure semantics
+
+- Non-passport scans now require a document-specific minimum field set and a
+  conservative per-geometry OCR confidence gate before returning `success`;
+  low-confidence regions are excluded before extraction, and partial or
+  low-confidence results return `failure` with structured errors. The bundled
+  HTTP server therefore returns `422` instead of `200` for partial KYC
+  extractions.
+- Added `identifierValid` for offline format/checksum results, semantic
+  date/age checks, and conservative confidence caps. These checks do not claim
+  document authenticity.
+- Non-passport responses no longer expose raw classifier OCR through
+  `probeText`, preventing secondary identifiers from leaking outside the
+  extractor's documented field contract.
+- Added optional KYC-only multi-model recognition through
+  `DOCUMENT_OCR_KYC_LANGS`, leaving passport OCR model selection unchanged.
+  Distinct script readings for the same text box are preserved, and readiness
+  initializes all configured models. Invalid model names fail closed, and the
+  npm local server now waits for `/ready` rather than liveness before accepting
+  scans.
+- Added a private KYC accuracy evaluator with a versioned manifest schema,
+  per-document/per-field and complete-record metrics, false-success gates, and
+  global plus document-specific design/year/issuer/language/capture-quality
+  slice gates. Required per-document variants must have accepted-positive
+  samples before evaluation can run.
+
+Dedicated passport OCR modules (page classification, MRZ parsing, back-page
+extraction, and passport validation) and passport-positive routing are unchanged
+in this release. KYC OCR runs only when the passport probe is unknown or finds
+no targeted text.
+
+### Migration
+
+- Consumers that construct `DocumentScanResult` values must add
+  `identifierValid`, `missingRequiredFields`, `nregaJobCardFields`, and
+  `nprLetterFields`.
+- Treat HTTP `422` as a completed, fail-closed scan result and inspect its
+  structured body; the JavaScript client already does this.
+
 ## 1.2.0 — 2026-06-07
 
 ### Multi-document support (additive, backward-compatible)

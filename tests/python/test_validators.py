@@ -5,9 +5,11 @@ from core.validators import (
     is_valid_aadhaar,
     is_valid_dl,
     is_valid_epic,
+    is_valid_nrega_job_card,
     is_valid_pan,
     normalize_dl,
     normalize_epic,
+    normalize_nrega_job_card,
     normalize_pan,
     verhoeff_validate,
 )
@@ -76,3 +78,17 @@ class TestDl:
 
     def test_invalid(self):
         assert is_valid_dl("MH-12-XYZ") is False
+
+
+class TestNregaJobCard:
+    def test_valid_hierarchical_number(self):
+        assert (
+            normalize_nrega_job_card("RJ-27-001-002-0008147/00")
+            == "RJ-27-001-002-0008147/00"
+        )
+        assert is_valid_nrega_job_card("UP-65-001-003-00876700/342") is True
+
+    def test_requires_state_and_multiple_numeric_components(self):
+        assert is_valid_nrega_job_card("JOB-CARD-123") is False
+        assert is_valid_nrega_job_card("RJ-27-123") is False
+        assert is_valid_nrega_job_card("ABCDE1234F") is False

@@ -16,6 +16,7 @@ import uuid
 from fastapi import FastAPI, File, Header, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
 
+from core.kyc_ocr import KycOCRConfigError
 from core.ocr_engine import OCRModelInitError
 from core.pipeline import scan
 from core.preprocessor import ImageQualityError
@@ -39,11 +40,13 @@ _model_init_error: str | None = None
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     global _models_ready, _model_init_error
+    _models_ready = False
+    _model_init_error = None
     logger.info("Loading OCR models...")
     loop = asyncio.get_running_loop()
     try:
         await loop.run_in_executor(None, _warm_up_ocr)
-    except OCRModelInitError as exc:
+    except (OCRModelInitError, KycOCRConfigError) as exc:
         # Stay up so /ready and /scan can report a clear error instead of the
         # process crash-looping. Liveness (/health) remains green.
         _model_init_error = str(exc)
@@ -54,12 +57,15 @@ async def _lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Document OCR", version="2.2.0", lifespan=_lifespan)
+app = FastAPI(title="Document OCR", version="3.0.0", lifespan=_lifespan)
 
 
 def _warm_up_ocr():
+    from core.kyc_ocr import configured_kyc_languages
     from core.ocr_engine import _get_ocr
-    _get_ocr("en")
+
+    for language in dict.fromkeys(("en", *configured_kyc_languages())):
+        _get_ocr(language)
 
 
 @app.get("/health")
@@ -122,6 +128,9 @@ async def scan_passport(
     except OCRModelInitError as e:
         logger.error(f"[{request_id}] model_init_failed={e}")
         return JSONResponse(status_code=503, content={"error": "MODEL_INIT_FAILED"})
+    except KycOCRConfigError as e:
+        logger.error(f"[{request_id}] invalid_kyc_ocr_config={e}")
+        return JSONResponse(status_code=503, content={"error": "INVALID_KYC_OCR_CONFIG"})
     except ImageQualityError as e:
         logger.info(f"[{request_id}] quality_error={e}")
         return JSONResponse(status_code=400, content={"error": str(e)})
