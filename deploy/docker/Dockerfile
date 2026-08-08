@@ -10,8 +10,10 @@ RUN apt-get update && \
 # Install uv for fast dependency management
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-# Install from pyproject.toml (single source of truth for dependencies)
-COPY pyproject.toml .
+# Install from pyproject.toml (single source of truth for dependencies).
+# LICENSE must come along: pyproject declares `license = { file = "LICENSE" }`
+# and hatchling reads it while resolving metadata, so the build fails without it.
+COPY pyproject.toml LICENSE ./
 COPY core/ core/
 RUN uv pip install --system --no-cache -e "."
 

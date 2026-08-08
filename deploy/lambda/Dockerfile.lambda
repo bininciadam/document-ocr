@@ -12,7 +12,9 @@ RUN microdnf install -y mesa-libGL glib2 libgomp && microdnf clean all
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 # Install dependencies from pyproject.toml (single source of truth).
-COPY pyproject.toml ${LAMBDA_TASK_ROOT}/
+# LICENSE must come along: pyproject declares `license = { file = "LICENSE" }`
+# and hatchling reads it while resolving metadata, so the build fails without it.
+COPY pyproject.toml LICENSE ${LAMBDA_TASK_ROOT}/
 COPY core/ ${LAMBDA_TASK_ROOT}/core/
 RUN uv pip install --system --no-cache -e "${LAMBDA_TASK_ROOT}"
 
