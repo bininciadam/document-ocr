@@ -1,13 +1,25 @@
 name: Publish
 
+# Fires on a version tag. The container jobs need no secrets — GITHUB_TOKEN is
+# enough for GHCR — so tagging always publishes images. npm publishing needs a
+# token, so it is opt-in and skips cleanly rather than failing the release:
+#
+#   gh secret   set NPM_TOKEN    # token with publish rights
+#   gh variable set PUBLISH_NPM --body 'true'
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
   npm:
+    name: npm (passport-ocr)
     runs-on: ubuntu-latest
+    if: vars.PUBLISH_NPM == 'true'
     permissions:
       contents: read
       id-token: write
@@ -32,12 +44,16 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   docker:
+    name: GHCR (server)
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -46,12 +62,69 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push
-        uses: docker/build-push-action@v5
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+
+      - id: build
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: deploy/docker/Dockerfile
+          # amd64 only: the OCR stack (onnxruntime, OpenCV) has patchy arm64
+          # wheels and emulated builds are slow enough to time out. Revisit with
+          # native arm64 runners.
+          platforms: linux/amd64
           push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - uses: actions/attest-build-provenance@v1
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+  docker-lambda:
+    name: GHCR (lambda)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
           tags: |
-            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
-            ghcr.io/${{ github.repository }}:latest
+            type=semver,pattern=lambda-{{version}}
+            type=raw,value=lambda,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/lambda/Dockerfile.lambda
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
