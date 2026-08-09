@@ -104,7 +104,7 @@ The package auto-creates a `.venv`, installs the Python deps, and manages the lo
 | POST | `/scan` | Multipart image upload, returns scan result JSON |
 
 `/scan` accepts images and PDFs up to 10 MB. Concurrency is serialized
-internally. Set `DOCUMENT_OCR_API_TOKEN` to require
+internally. Set `API_TOKEN` to require
 `Authorization: Bearer <token>` on `/scan`. For internet-facing deployments,
 use platform IAM or an API gateway in addition to application-level controls.
 Incomplete or semantically invalid non-passport extractions return HTTP `422`

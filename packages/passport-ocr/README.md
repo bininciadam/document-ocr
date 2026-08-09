@@ -77,12 +77,12 @@ Unsupported names or more than four models fail server readiness.
 const ocr = new DocumentOCR({
   mode: 'http',
   endpoint: 'https://ocr.example.com',
-  apiKey: process.env.DOCUMENT_OCR_API_TOKEN,
+  apiKey: process.env.API_TOKEN,
 })
 ```
 
 `apiKey` is sent as a Bearer token. The included Python server enforces it when
-`DOCUMENT_OCR_API_TOKEN` is configured.
+`API_TOKEN` is configured.
 
 ### AWS Lambda
 

@@ -27,7 +27,9 @@ from core.preprocessor import ImageQualityError
 
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
 logger = logging.getLogger("document-ocr")
-API_TOKEN = os.getenv("DOCUMENT_OCR_API_TOKEN") or None
+# Matches the sibling pdf-worker service so a deployment sets one variable name
+# everywhere. Unset means no auth is enforced, which is what local development wants.
+API_TOKEN = os.getenv("API_TOKEN") or None
 
 _ocr_semaphore = asyncio.Semaphore(1)
 _models_ready = False
