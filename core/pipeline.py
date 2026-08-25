@@ -562,20 +562,18 @@ def _build_fields(
         fields.full_name = fields.surname
     elif fields.given_names:
         fields.full_name = fields.given_names
-
+        
     # ---------------------------------------------------------
     # ISSUE DATE
     # ---------------------------------------------------------
 
-    raw_issue_date = _extract_visual_field(
+    raw_issue_date = _extract_visual_date_after_label(
         regions,
         [
             "DATE OF ISSUE",
             "ISSUE DATE",
             "DUZENLEME TARIHI",
             "DÜZENLEME TARİHİ",
-            "DUZENLEME TARIHI / DATE OF ISSUE",
-            "DÜZENLEME TARİHİ / DATE OF ISSUE",
         ],
     )
 
@@ -684,7 +682,56 @@ def _levenshtein_distance(a: str, b: str) -> int:
         previous_row = current_row
 
     return previous_row[-1]
+def _extract_visual_date_after_label(
+    regions: list[TextRegion],
+    labels: list[str],
+) -> Optional[str]:
 
+    label_region = find_visual_field(regions, labels)
+
+    if label_region is None:
+        return None
+
+    # Label'ın üst koordinatı
+    label_y = min(point[1] for point in label_region.bbox)
+
+    candidates = []
+
+    for region in regions:
+        text = region.text.strip()
+
+        # İçinde rakam olmayan satırlar tarih olamaz
+        if not re.search(r"\b\d{1,2}\b", text):
+            continue
+
+        region_y = min(point[1] for point in region.bbox)
+
+        # Label'ın üstünde bulunan değerleri alma
+        if region_y < label_y:
+            continue
+
+        distance = region_y - label_y
+
+        candidates.append((distance, text))
+
+    if not candidates:
+        return None
+
+    # Label'a en yakın satır önce
+    candidates.sort(key=lambda x: x[0])
+
+    for _, text in candidates:
+
+        normalized = _normalize_visual_date(text)
+
+        # Gerçekten YYYY-MM-DD formatına çevrilebildiyse kabul et
+        if normalized and re.match(
+            r"^\d{4}-\d{2}-\d{2}$",
+            normalized
+        ):
+            return text
+
+    return None
 
 def _extract_visual_field(
     regions: list[TextRegion],
