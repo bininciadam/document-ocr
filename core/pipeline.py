@@ -500,23 +500,25 @@ def _build_fields(
     elif fields.surname:
         fields.full_name = fields.surname
 
-raw_issue_date = _extract_visual_field(
-    regions,
-    [
-        "DATE OF ISSUE",
-        "ISSUE DATE",
-        "ISSUED",
-        "DÉLIVRANCE",
-        "DUZENLEME TARIHI",
-        "DÜZENLEME TARİHİ",
-    ],
-)
+    raw_issue_date = _extract_visual_field(
+        regions,
+        [
+            "DATE OF ISSUE",
+            "ISSUE DATE",
+            "ISSUED",
+            "DÉLIVRANCE",
+            "DUZENLEME TARIHI",
+            "DÜZENLEME TARİHİ",
+        ],
+    )
 
-fields.issue_date = _normalize_visual_date(raw_issue_date)
+    fields.issue_date = _normalize_visual_date(raw_issue_date)
+
     fields.place_of_birth = _extract_visual_field(
         regions,
         ["PLACE OF BIRTH", "BIRTHPLACE", "LIEU DE NAISSANCE"],
     )
+
     return fields
 
 
