@@ -19,16 +19,7 @@ COPY core/ core/
 RUN uv pip install --system --no-cache -e "."
 
 # Pre-download RapidOCR PP-OCRv5 models at build time
-RUN python -c "\
-from rapidocr import RapidOCR, LangRec, ModelType, OCRVersion; \
-RapidOCR(params={ \
-    'Global.use_cls': False, \
-    'Det.model_type': ModelType.MOBILE, \
-    'Det.ocr_version': OCRVersion.PPOCRV5, \
-    'Rec.lang_type': LangRec.EN, \
-    'Rec.model_type': ModelType.MOBILE, \
-    'Rec.ocr_version': OCRVersion.PPOCRV5, \
-})"
+RUN python -c "from rapidocr import RapidOCR, LangRec, ModelType, OCRVersion; RapidOCR(params={'Global.use_cls': False, 'Det.model_type': ModelType.MOBILE, 'Det.ocr_version': OCRVersion.PPOCRV5, 'Rec.lang_type': LangRec.EN, 'Rec.model_type': ModelType.MOBILE, 'Rec.ocr_version': OCRVersion.PPOCRV5})"
 
 # Copy server
 COPY deploy/docker/server.py server.py
