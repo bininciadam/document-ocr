@@ -168,7 +168,16 @@ def scan(image_input: Union[str, bytes, Path]) -> DocumentScanResult:
 
     mrz = parse_mrz(regions)
     validation = validate(mrz, regions)
-    fields = _build_fields(mrz, regions)
+
+    # MRZ için alt bölgedeki targeted OCR yeterli,
+    # fakat ad/soyad, issue date gibi görsel alanlar için
+    # tüm pasaport sayfasını OCR'dan geçiriyoruz.
+    full_regions = run_ocr(prep.image)
+
+    fields = _build_fields(
+        mrz,
+        full_regions if full_regions else regions
+    )
 
     if _needs_full_page_fallback(mrz, validation, fields):
         fallback_regions = run_ocr(prep.image)
@@ -176,7 +185,12 @@ def scan(image_input: Union[str, bytes, Path]) -> DocumentScanResult:
             fallback_mrz = parse_mrz(fallback_regions)
             fallback_validation = validate(fallback_mrz, fallback_regions)
             fallback_fields = _build_fields(fallback_mrz, fallback_regions)
-            if _candidate_score(fallback_mrz, fallback_validation, fallback_fields) > _candidate_score(
+
+            if _candidate_score(
+                fallback_mrz,
+                fallback_validation,
+                fallback_fields
+            ) > _candidate_score(
                 mrz,
                 validation,
                 fields,
@@ -187,6 +201,7 @@ def scan(image_input: Union[str, bytes, Path]) -> DocumentScanResult:
                 fields = fallback_fields
 
     mrz_valid = mrz.overall_checksum_valid if mrz else False
+
     all_warnings = prep.warnings.copy()
     all_errors = validation.errors.copy()
 
@@ -485,6 +500,7 @@ def _build_fields(
 ) -> PassportFields:
     fields = PassportFields()
 
+    # Önce MRZ değerlerini al
     if mrz:
         fields.surname = mrz.surname.value
         fields.given_names = mrz.given_names.value
@@ -495,31 +511,179 @@ def _build_fields(
         fields.expiry_date = mrz.expiry_date.value
         fields.country_code = mrz.country_code.value
 
+    # ---------------------------------------------------------
+    # VISUAL NAME EXTRACTION
+    # ---------------------------------------------------------
+
+    visual_surname = _extract_visual_field(
+        regions,
+        [
+            "SURNAME",
+            "SOYADI",
+            "SOYADI / SURNAME",
+            "SOYADI/SURNAME",
+        ],
+    )
+
+    visual_given_names = _extract_visual_field(
+        regions,
+        [
+            "GIVEN NAMES",
+            "GIVEN NAME",
+            "ADI",
+            "ADI / GIVEN NAMES",
+            "ADI/GIVEN NAMES",
+        ],
+    )
+
+    visual_surname = _clean_name_value(visual_surname)
+    visual_given_names = _clean_name_value(visual_given_names)
+
+    # Görsel OCR ile MRZ birbirine yakınsa görsel değeri tercih et.
+    # Örn: MRZ ASAN, görsel ASLAN -> ASLAN
+    if visual_surname:
+        if (
+            not fields.surname
+            or _names_are_similar(fields.surname, visual_surname)
+        ):
+            fields.surname = visual_surname
+
+    if visual_given_names:
+        if (
+            not fields.given_names
+            or _names_are_similar(fields.given_names, visual_given_names)
+        ):
+            fields.given_names = visual_given_names
+
+    # Ad Soyad'ı nihai değerlerden tekrar oluştur
     if fields.surname and fields.given_names:
         fields.full_name = f"{fields.given_names} {fields.surname}"
     elif fields.surname:
         fields.full_name = fields.surname
+    elif fields.given_names:
+        fields.full_name = fields.given_names
+
+    # ---------------------------------------------------------
+    # ISSUE DATE
+    # ---------------------------------------------------------
 
     raw_issue_date = _extract_visual_field(
         regions,
         [
             "DATE OF ISSUE",
             "ISSUE DATE",
-            "ISSUED",
-            "DÉLIVRANCE",
             "DUZENLEME TARIHI",
             "DÜZENLEME TARİHİ",
+            "DUZENLEME TARIHI / DATE OF ISSUE",
+            "DÜZENLEME TARİHİ / DATE OF ISSUE",
         ],
     )
 
     fields.issue_date = _normalize_visual_date(raw_issue_date)
 
+    # ---------------------------------------------------------
+    # PLACE OF BIRTH
+    # ---------------------------------------------------------
+
     fields.place_of_birth = _extract_visual_field(
         regions,
-        ["PLACE OF BIRTH", "BIRTHPLACE", "LIEU DE NAISSANCE"],
+        [
+            "PLACE OF BIRTH",
+            "BIRTHPLACE",
+            "DOGUM YERI",
+            "DOĞUM YERİ",
+        ],
     )
 
     return fields
+
+def _clean_name_value(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+
+    value = value.upper().strip()
+
+    # İsimlerde beklenmeyen karakterleri temizle
+    value = re.sub(r"[^A-ZÇĞİÖŞÜ\s\-']", "", value)
+
+    # Birden fazla boşluğu teke indir
+    value = re.sub(r"\s+", " ", value).strip()
+
+    # OCR yanlışlıkla label'ı value olarak döndürmüşse kullanma
+    forbidden = [
+        "SURNAME",
+        "SOYADI",
+        "GIVEN NAME",
+        "DATE OF",
+        "PASSPORT",
+        "NATIONALITY",
+        "SEX",
+    ]
+
+    if any(word in value for word in forbidden):
+        return None
+
+    if len(value) < 2:
+        return None
+
+    return value
+
+
+def _names_are_similar(a: str, b: str) -> bool:
+    if not a or not b:
+        return False
+
+    a = _normalize_name_for_compare(a)
+    b = _normalize_name_for_compare(b)
+
+    if a == b:
+        return True
+
+    # Uzunluk farkı 1 ve sadece tek karakterlik OCR hatası varsa
+    # görsel alanı kabul et.
+    if abs(len(a) - len(b)) <= 1:
+        return _levenshtein_distance(a, b) <= 1
+
+    return False
+
+
+def _normalize_name_for_compare(value: str) -> str:
+    return (
+        value.upper()
+        .replace("İ", "I")
+        .replace("Ş", "S")
+        .replace("Ğ", "G")
+        .replace("Ü", "U")
+        .replace("Ö", "O")
+        .replace("Ç", "C")
+        .replace(" ", "")
+    )
+
+
+def _levenshtein_distance(a: str, b: str) -> int:
+    if len(a) < len(b):
+        return _levenshtein_distance(b, a)
+
+    if len(b) == 0:
+        return len(a)
+
+    previous_row = list(range(len(b) + 1))
+
+    for i, char_a in enumerate(a):
+        current_row = [i + 1]
+
+        for j, char_b in enumerate(b):
+            insertions = previous_row[j + 1] + 1
+            deletions = current_row[j] + 1
+            substitutions = previous_row[j] + (char_a != char_b)
+
+            current_row.append(
+                min(insertions, deletions, substitutions)
+            )
+
+        previous_row = current_row
+
+    return previous_row[-1]
 
 
 def _extract_visual_field(
