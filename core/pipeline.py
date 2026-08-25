@@ -8,6 +8,7 @@ MRZ parsing → validation.
 from __future__ import annotations
 
 import time
+import re
 from dataclasses import dataclass, field, fields as dataclass_fields
 from pathlib import Path
 from typing import Optional, Union
@@ -499,10 +500,19 @@ def _build_fields(
     elif fields.surname:
         fields.full_name = fields.surname
 
-    fields.issue_date = _extract_visual_field(
-        regions,
-        ["DATE OF ISSUE", "ISSUE DATE", "ISSUED", "DÉLIVRANCE"],
-    )
+raw_issue_date = _extract_visual_field(
+    regions,
+    [
+        "DATE OF ISSUE",
+        "ISSUE DATE",
+        "ISSUED",
+        "DÉLIVRANCE",
+        "DUZENLEME TARIHI",
+        "DÜZENLEME TARİHİ",
+    ],
+)
+
+fields.issue_date = _normalize_visual_date(raw_issue_date)
     fields.place_of_birth = _extract_visual_field(
         regions,
         ["PLACE OF BIRTH", "BIRTHPLACE", "LIEU DE NAISSANCE"],
@@ -521,3 +531,130 @@ def _extract_visual_field(
     if value_region is None:
         return None
     return value_region.text.strip()
+
+
+def _normalize_visual_date(value: Optional[str]) -> Optional[str]:
+    """
+    Convert passport visual dates to ISO YYYY-MM-DD.
+
+    Examples:
+        23 EKI/OCT 2023 -> 2023-10-23
+        25 SUB/FEB 1966 -> 1966-02-25
+        14 HAZ/JUN 2024 -> 2024-06-14
+        23 OCT 2023     -> 2023-10-23
+    """
+
+    if not value:
+        return None
+
+    text = value.upper().strip()
+
+    # OCR sometimes produces Turkish characters without accents.
+    text = (
+        text
+        .replace("İ", "I")
+        .replace("Ş", "S")
+        .replace("Ğ", "G")
+        .replace("Ü", "U")
+        .replace("Ö", "O")
+        .replace("Ç", "C")
+    )
+
+    month_map = {
+        # January
+        "JAN": 1,
+        "OCA": 1,
+
+        # February
+        "FEB": 2,
+        "SUB": 2,
+
+        # March
+        "MAR": 3,
+
+        # April
+        "APR": 4,
+        "NIS": 4,
+
+        # May
+        "MAY": 5,
+
+        # June
+        "JUN": 6,
+        "HAZ": 6,
+
+        # July
+        "JUL": 7,
+        "TEM": 7,
+
+        # August
+        "AUG": 8,
+        "AGU": 8,
+
+        # September
+        "SEP": 9,
+        "EYL": 9,
+
+        # October
+        "OCT": 10,
+        "EKI": 10,
+
+        # November
+        "NOV": 11,
+        "KAS": 11,
+
+        # December
+        "DEC": 12,
+        "ARA": 12,
+    }
+
+    # First try numeric formats such as:
+    # 23/10/2023
+    # 23.10.2023
+    # 23-10-2023
+    numeric_match = re.search(
+        r"\b(\d{1,2})[./-](\d{1,2})[./-](\d{4})\b",
+        text
+    )
+
+    if numeric_match:
+        day = int(numeric_match.group(1))
+        month = int(numeric_match.group(2))
+        year = int(numeric_match.group(3))
+
+        try:
+            from datetime import date
+            return date(year, month, day).isoformat()
+        except ValueError:
+            return value.strip()
+
+    # Text formats such as:
+    # 23 EKI/OCT 2023
+    # 23 OCT 2023
+    # 23 EKI 2023
+    text_match = re.search(
+        r"\b(\d{1,2})\s+([A-Z]{3,})(?:/([A-Z]{3,}))?\s+(\d{4})\b",
+        text
+    )
+
+    if not text_match:
+        return value.strip()
+
+    day = int(text_match.group(1))
+    month_token_1 = text_match.group(2)
+    month_token_2 = text_match.group(3)
+    year = int(text_match.group(4))
+
+    month = month_map.get(month_token_1)
+
+    if month is None and month_token_2:
+        month = month_map.get(month_token_2)
+
+    if month is None:
+        return value.strip()
+
+    try:
+        from datetime import date
+        return date(year, month, day).isoformat()
+    except ValueError:
+        return value.strip()
