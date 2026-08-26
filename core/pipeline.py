@@ -162,10 +162,16 @@ def scan(image_input: Union[str, bytes, Path]) -> DocumentScanResult:
             processing_ms=_elapsed_ms(start),
         )
 
-    if classification.page_type != "passport_biodata":
-        # Not a passport per the cheap bottom-crop probe — route to the other
-        # supported document types using full-page OCR.
-        return _scan_non_passport(prep, classification, start)
+        if classification.page_type != "passport_biodata":
+
+        # Passport classifier kaçırmış olsa bile MRZ varsa
+        # önce pasaport olarak işlemeyi dene.
+        possible_mrz = parse_mrz(regions)
+
+        if possible_mrz is not None:
+            classification.page_type = "passport_biodata"
+        else:
+            return _scan_non_passport(prep, classification, start)
 
     mrz = parse_mrz(regions)
     validation = validate(mrz, regions)
