@@ -48,6 +48,7 @@ class PassportFields:
     issue_date: Optional[str] = None
     place_of_birth: Optional[str] = None
     country_code: Optional[str] = None
+    personal_number: Optional[str] = None
 
 
 @dataclass
@@ -378,6 +379,7 @@ def _fields_to_dict(fields: Optional[PassportFields]) -> Optional[dict]:
         "issueDate": fields.issue_date,
         "placeOfBirth": fields.place_of_birth,
         "countryCode": fields.country_code,
+        "personalNumber": fields.personal_number,
     }
 
 
@@ -479,6 +481,74 @@ def _candidate_score(
         score += 0.05
     return score
 
+def _extract_turkish_id_from_mrz(
+    mrz: Optional[MRZResult]
+) -> Optional[str]:
+
+    if not mrz or not mrz.raw_lines or len(mrz.raw_lines) < 2:
+        return None
+
+    line2 = mrz.raw_lines[1]
+
+    # TD3 pasaport MRZ ikinci satırı 44 karakterdir.
+    if len(line2) < 42:
+        return None
+
+    # Optional / personal number alanı:
+    # karakter pozisyonları 29-42
+    personal_field = line2[28:42]
+
+    # '<' filler karakterlerini kaldır
+    personal_number = personal_field.replace("<", "").strip()
+
+    # Türk pasaportlarında TC Kimlik No 11 rakam olmalı
+    if not re.match(r"^\d{11}$", personal_number):
+        return None
+
+    # T.C. Kimlik No matematiksel doğrulaması
+    if not _validate_turkish_id(personal_number):
+        return None
+
+    return personal_number
+
+
+def _validate_turkish_id(value: str) -> bool:
+
+    if not value or not re.match(r"^\d{11}$", value):
+        return False
+
+    # T.C. Kimlik No 0 ile başlayamaz
+    if value[0] == "0":
+        return False
+
+    digits = [int(x) for x in value]
+
+    odd_sum = (
+        digits[0]
+        + digits[2]
+        + digits[4]
+        + digits[6]
+        + digits[8]
+    )
+
+    even_sum = (
+        digits[1]
+        + digits[3]
+        + digits[5]
+        + digits[7]
+    )
+
+    digit_10 = ((odd_sum * 7) - even_sum) % 10
+
+    if digit_10 != digits[9]:
+        return False
+
+    digit_11 = sum(digits[:10]) % 10
+
+    if digit_11 != digits[10]:
+        return False
+
+    return True
 
 def _has_meaningful_fields(fields: PassportFields) -> bool:
     return any(
@@ -510,6 +580,7 @@ def _build_fields(
         fields.sex = mrz.sex.value
         fields.expiry_date = mrz.expiry_date.value
         fields.country_code = mrz.country_code.value
+        fields.personal_number = _extract_turkish_id_from_mrz(mrz)
 
     # ---------------------------------------------------------
     # VISUAL NAME EXTRACTION
