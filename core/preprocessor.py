@@ -20,7 +20,9 @@ from PIL import Image
 # Constants
 # ---------------------------------------------------------------------------
 
-MIN_RESOLUTION = 600          # shortest dimension must be >= this
+MIN_RESOLUTION = 600          # OCR için hedef minimum kısa kenar
+HARD_MIN_RESOLUTION = 300     # Bunun altındaki görüntüyü gerçekten reddet
+UPSCALE_MIN_RESOLUTION = 900  # Düşük çözünürlükte kısa kenarı buna büyüt
 BLUR_THRESHOLD = 80           # Laplacian variance below this → blurry
 GLARE_V_THRESHOLD = 250       # HSV V channel threshold for glare
 GLARE_PIXEL_RATIO = 0.15      # reject if > 15 % pixels exceed V threshold
@@ -114,10 +116,37 @@ def _load_heic(path: str) -> np.ndarray:
     return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
 
 
-def _check_resolution(img: np.ndarray) -> None:
+def _prepare_resolution(img: np.ndarray) -> tuple[np.ndarray, list[str]]:
+    """
+    Düşük çözünürlüklü fakat kullanılabilir görüntüleri OCR öncesi büyütür.
+
+    Çok küçük görüntüler yine reddedilir.
+    """
     h, w = img.shape[:2]
-    if min(h, w) < MIN_RESOLUTION:
+    shortest = min(h, w)
+
+    warnings = []
+
+    # Gerçekten çok küçük görüntüyü büyütmenin faydası olmaz.
+    if shortest < HARD_MIN_RESOLUTION:
         raise ImageQualityError("RESOLUTION_TOO_LOW")
+
+    # 600 px altındaysa OCR için otomatik büyüt.
+    if shortest < MIN_RESOLUTION:
+        scale = UPSCALE_MIN_RESOLUTION / float(shortest)
+
+        new_w = int(round(w * scale))
+        new_h = int(round(h * scale))
+
+        img = cv2.resize(
+            img,
+            (new_w, new_h),
+            interpolation=cv2.INTER_CUBIC
+        )
+
+        warnings.append("IMAGE_UPSCALED")
+
+    return img, warnings
 
 
 def _check_blur(img: np.ndarray, threshold: float = BLUR_THRESHOLD) -> None:
@@ -274,11 +303,16 @@ def preprocess(
     6. Normalisation (resize + CLAHE)
     """
     img = _load_image(source)
-    _check_resolution(img)
+
+    # Düşük çözünürlüklü fakat kullanılabilir görüntüleri büyüt
+    img, resolution_warnings = _prepare_resolution(img)
+
     _check_blur(img, threshold=blur_threshold)
     glare_warning = _check_glare(img)
 
     corners, warnings = _detect_document(img)
+
+    warnings = resolution_warnings + warnings
 
     if glare_warning:
         warnings.append(glare_warning)
