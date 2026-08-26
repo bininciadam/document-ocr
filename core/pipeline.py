@@ -230,7 +230,7 @@ def scan(image_input: Union[str, bytes, Path]) -> DocumentScanResult:
     )
     low_confidence = 0.3 <= overall_confidence < 0.7
 
-    if mrz_valid and fields.passport_number and fields.surname and overall_confidence >= 0.7:
+    if mrz_valid and fields.passport_number and fields.surname:
         return DocumentScanResult(
             status="success",
             document_type="passport",
