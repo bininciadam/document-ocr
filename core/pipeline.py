@@ -147,10 +147,12 @@ def scan(image_input: Union[str, bytes, Path]) -> DocumentScanResult:
         )
 
     classification = classify_passport_page(regions)
+
     if classification.page_type == "passport_non_biodata":
         # Run full-page OCR for back page extraction (not just bottom crop)
         full_regions = run_ocr(prep.image)
         back_fields = extract_back_page(full_regions)
+
         return DocumentScanResult(
             status="success",
             document_type="passport",
@@ -162,7 +164,7 @@ def scan(image_input: Union[str, bytes, Path]) -> DocumentScanResult:
             processing_ms=_elapsed_ms(start),
         )
 
-        if classification.page_type != "passport_biodata":
+    if classification.page_type != "passport_biodata":
 
         # Passport classifier kaçırmış olsa bile MRZ varsa
         # önce pasaport olarak işlemeyi dene.
@@ -171,7 +173,11 @@ def scan(image_input: Union[str, bytes, Path]) -> DocumentScanResult:
         if possible_mrz is not None:
             classification.page_type = "passport_biodata"
         else:
-            return _scan_non_passport(prep, classification, start)
+            return _scan_non_passport(
+                prep,
+                classification,
+                start
+            )
 
     mrz = parse_mrz(regions)
     validation = validate(mrz, regions)
@@ -185,7 +191,6 @@ def scan(image_input: Union[str, bytes, Path]) -> DocumentScanResult:
         mrz,
         full_regions if full_regions else regions
     )
-
     if _needs_full_page_fallback(mrz, validation, fields):
         fallback_regions = run_ocr(prep.image)
         if fallback_regions:
